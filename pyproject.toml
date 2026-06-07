@@ -33,7 +33,7 @@ Repository = "https://github.com/loschenbd/imessage-history"
 Issues    = "https://github.com/loschenbd/imessage-history/issues"
 
 [project.scripts]
-imessage-export = "imessage_export:main"
+imessage-export = "imessage_export.cli:main"
 
-[tool.setuptools]
-py-modules = ["imessage_export"]
+[tool.setuptools.packages.find]
+include = ["imessage_export*"]
