@@ -60,9 +60,12 @@ Output lands in `exports/<contact-or-group>/<YYYY-MM-DD>/` with:
 
 - Core code lives under `imessage_export/` (small package along section
   banners: timestamps, decoder, models, db, contacts, window, export,
-  writers, redactor, cli). The optional TUI under `imessage_export/tui/`
-  is only importable when the `[tui]` extra is installed; core modules
-  must not import anything under `tui/` at module top level.
+  writers, redactor, cli). The optional TUI surfaces under `imessage_export/tui/`:
+  - `tui/wizard.py` — Phase 1 linear questionary flow (opt-in via `--wizard`)
+  - `tui/app/`      — Phase 2 Textual app (default on a TTY)
+
+  Both are gated behind the `[tui]` extra. Core modules must not import
+  either at module top level.
 - All time math is in the system's local timezone, converted to Apple's
   2001-epoch nanoseconds for SQL. Upper bounds are exclusive.
 - Writers (`write_csv`, `write_json`, `write_txt`, `write_markdown`,
