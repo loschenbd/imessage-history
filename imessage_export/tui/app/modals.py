@@ -101,3 +101,56 @@ class WindowModal(ModalScreen[Optional[dict]]):
             })
         else:
             self.dismiss({"mode": "all"})
+
+
+class SettingsModal(ModalScreen[Optional[dict]]):
+    """Edit persistent contacts/output/me. Dismisses with a dict or None."""
+
+    DEFAULT_CSS = """
+    SettingsModal {
+        align: center middle;
+    }
+    SettingsModal > Vertical {
+        width: 70;
+        padding: 1 2;
+        border: thick $primary;
+        background: $surface;
+    }
+    """
+
+    BINDINGS = [("escape", "dismiss_none", "Cancel")]
+
+    def __init__(self, *, contacts_path: Optional[str], output_dir: str, me_name: str) -> None:
+        super().__init__()
+        self._contacts_path = contacts_path or ""
+        self._output_dir = output_dir
+        self._me_name = me_name
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static("Settings", classes="modal-title")
+            with Horizontal():
+                yield Label("Contacts file: ")
+                yield Input(value=self._contacts_path, id="contacts-path")
+            with Horizontal():
+                yield Label("Output dir:    ")
+                yield Input(value=self._output_dir, id="output-dir")
+            with Horizontal():
+                yield Label("Your label:    ")
+                yield Input(value=self._me_name, id="me-name")
+            with Horizontal():
+                yield Button("Cancel", id="cancel")
+                yield Button("Save", id="save", variant="primary")
+
+    def action_dismiss_none(self) -> None:
+        self.dismiss(None)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cancel":
+            self.dismiss(None)
+            return
+        self.dismiss({
+            "contacts_path": self.query_one("#contacts-path", Input).value.strip() or None,
+            "output_dir":    self.query_one("#output-dir", Input).value.strip() or "./exports",
+            "me_name":       self.query_one("#me-name", Input).value.strip() or "Me",
+        })

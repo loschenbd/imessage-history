@@ -44,6 +44,7 @@ class ImessageExportApp(App):
 
     BINDINGS = [
         ("w", "open_window_modal", "Window"),
+        ("s", "open_settings_modal", "Settings"),
     ]
 
     def __init__(self) -> None:
@@ -163,3 +164,47 @@ class ImessageExportApp(App):
         self.state.typed_window = result
         self.state.window_source = "typed"
         self.state.last_export_status = None
+
+    # ------------------------------------------------------------------
+    # Task 9: SettingsModal
+    # ------------------------------------------------------------------
+
+    async def action_open_settings_modal(self) -> None:
+        from .modals import SettingsModal
+        result = await self.push_screen_wait(SettingsModal(
+            contacts_path=str(self.state.contacts_path) if self.state.contacts_path else None,
+            output_dir=str(self.state.output_dir),
+            me_name=self.state.me_name,
+        ))
+        if result is None:
+            return
+
+        # Validate the contacts path if one was given.
+        if result["contacts_path"]:
+            from ...contacts import load_contacts
+            try:
+                self.state.contacts = load_contacts(Path(result["contacts_path"]))
+                self.state.contacts_path = Path(result["contacts_path"])
+            except Exception as exc:
+                from .modals import ErrorModal
+                await self.push_screen_wait(ErrorModal(
+                    title="Contacts file error",
+                    body=f"{result['contacts_path']}\n\n{exc}",
+                ))
+                return  # don't persist a bad path
+        else:
+            self.state.contacts_path = None
+            self.state.contacts = {}
+
+        self.state.output_dir = Path(result["output_dir"]).expanduser()
+        self.state.me_name = result["me_name"]
+        self._persist_defaults()
+
+    def _persist_defaults(self) -> None:
+        from ..defaults import Defaults, save as save_defaults
+        save_defaults(Defaults(
+            contacts_path=str(self.state.contacts_path) if self.state.contacts_path else None,
+            output_dir=str(self.state.output_dir),
+            me_name=self.state.me_name,
+            last_chat_id=self.state.selected_chat_id,
+        ))
