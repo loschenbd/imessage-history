@@ -318,6 +318,7 @@ class ImessageExportApp(App):
             contacts_path=str(self.state.contacts_path) if self.state.contacts_path else None,
             output_dir=str(self.state.output_dir),
             me_name=self.state.me_name,
+            theme_override=self._defaults.theme_override if self._defaults else None,
         ))
         if result is None:
             return
@@ -341,6 +342,16 @@ class ImessageExportApp(App):
 
         self.state.output_dir = Path(result["output_dir"]).expanduser()
         self.state.me_name = result["me_name"]
+        # Apply the picked theme live + remember it for persistence.
+        if self._defaults is not None:
+            self._defaults.theme_override = result["theme_override"]
+        import os
+        from ..theme import resolve_theme_name
+        self.theme = resolve_theme_name(
+            cli=getattr(self, "_cli_theme", None),
+            env=os.environ.get("IMESSAGE_EXPORT_THEME"),
+            persisted=result["theme_override"],
+        )
         self._persist_defaults()
         self._refresh_status()
 
@@ -351,6 +362,7 @@ class ImessageExportApp(App):
             output_dir=str(self.state.output_dir),
             me_name=self.state.me_name,
             last_chat_id=self.state.selected_chat_id,
+            theme_override=self._defaults.theme_override if self._defaults else None,
         ))
 
     # ------------------------------------------------------------------

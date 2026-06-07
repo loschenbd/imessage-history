@@ -167,13 +167,13 @@ def _dispatch(args, argv, parser) -> int:
     )
 
     if args.app:
-        return _run_app()
+        return _run_app(args)
 
     if args.wizard and not has_action_flag:
-        return _run_wizard()
+        return _run_wizard(args)
 
     if no_explicit_args and is_tty and not is_ci and not has_action_flag:
-        return _run_app()
+        return _run_app(args)
 
     if args.build_contacts is not None:
         from .contacts_macos import build_contacts_csv
@@ -199,10 +199,10 @@ def _dispatch(args, argv, parser) -> int:
         conn.close()
 
 
-def _run_app() -> int:
+def _run_app(args=None) -> int:
     """Enter the Textual app. Requires the [tui] extra."""
     try:
-        from .tui.app import run as run_app
+        from .tui.app.app import ImessageExportApp
     except ImportError:
         print(
             "imessage-export: interactive mode needs the [tui] extra.\n"
@@ -211,15 +211,29 @@ def _run_app() -> int:
             file=sys.stderr,
         )
         return 2
-    return run_app()
+    app = ImessageExportApp()
+    app._cli_theme = getattr(args, "theme", None)
+    return app.run() or 0
 
 
-def _run_wizard() -> int:
+def _run_wizard(args=None) -> int:
     try:
         from .tui.wizard import run as run_wizard
     except ImportError:
         print(_TUI_MISSING_MSG, file=sys.stderr)
         return 2
+    # Prime the themed Rich console with the resolved palette so wizard
+    # surfaces respect --theme / env / persisted ordering. Imports are
+    # local so the headless CLI path stays import-cheap.
+    import imessage_export.tui.theme as _theme_mod
+    from .tui.theme import make_console, resolve_palette
+    from .tui.defaults import load as _load_defaults
+    palette = resolve_palette(
+        cli=getattr(args, "theme", None),
+        env=os.environ.get("IMESSAGE_EXPORT_THEME"),
+        persisted=_load_defaults().theme_override,
+    )
+    _theme_mod._console = make_console(palette)
     return run_wizard()
 
 

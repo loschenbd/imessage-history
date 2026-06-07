@@ -123,11 +123,15 @@ class SettingsModal(ModalScreen[Optional[dict]]):
 
     BINDINGS = [("escape", "dismiss_none", "Cancel")]
 
-    def __init__(self, *, contacts_path: Optional[str], output_dir: str, me_name: str) -> None:
+    def __init__(
+        self, *, contacts_path: Optional[str], output_dir: str, me_name: str,
+        theme_override: Optional[str] = None,
+    ) -> None:
         super().__init__()
         self._contacts_path = contacts_path or ""
         self._output_dir = output_dir
         self._me_name = me_name
+        self._theme_override = theme_override   # 'dawnfox' | 'terafox' | None
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -142,6 +146,15 @@ class SettingsModal(ModalScreen[Optional[dict]]):
                 yield Label("Your label:    ")
                 yield Input(value=self._me_name, id="me-name")
             with Horizontal():
+                yield Label("Theme:         ")
+                with RadioSet(id="theme-set"):
+                    yield RadioButton("Auto (system)", id="theme-auto",
+                                      value=(self._theme_override is None))
+                    yield RadioButton("Dawnfox (light)", id="theme-dawnfox",
+                                      value=(self._theme_override == "dawnfox"))
+                    yield RadioButton("Terafox (dark)", id="theme-terafox",
+                                      value=(self._theme_override == "terafox"))
+            with Horizontal():
                 yield Button("Cancel", id="cancel")
                 yield Button("Save", id="save", variant="primary")
 
@@ -152,10 +165,19 @@ class SettingsModal(ModalScreen[Optional[dict]]):
         if event.button.id == "cancel":
             self.dismiss(None)
             return
+        theme_set = self.query_one("#theme-set", RadioSet)
+        pressed = theme_set.pressed_button
+        if pressed is None or pressed.id == "theme-auto":
+            picked_theme = None
+        elif pressed.id == "theme-dawnfox":
+            picked_theme = "dawnfox"
+        else:
+            picked_theme = "terafox"
         self.dismiss({
             "contacts_path": self.query_one("#contacts-path", Input).value.strip() or None,
             "output_dir":    self.query_one("#output-dir", Input).value.strip() or "./exports",
             "me_name":       self.query_one("#me-name", Input).value.strip() or "Me",
+            "theme_override": picked_theme,
         })
 
 
