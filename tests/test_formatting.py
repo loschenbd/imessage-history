@@ -412,6 +412,17 @@ class WriteJsonGapTests(unittest.TestCase):
         self.assertEqual(payload["messages"][0]["gap_seconds_before"], 0)
         self.assertEqual(payload["messages"][1]["gap_seconds_before"], 5400)
 
+    def test_z_suffix_utc_parses_on_python_310(self):
+        # Defensive: if anything upstream ever switches to Z-suffix UTC
+        # strings, gap math must still work. fromisoformat doesn't accept
+        # 'Z' on 3.10 — write_json normalizes it before parsing.
+        m1 = Stub(timestamp="2026-06-06 09:00:00", text="hi")
+        m1.timestamp_utc = "2026-06-06T16:00:00Z"
+        m2 = Stub(timestamp="2026-06-06 10:30:00", text="back")
+        m2.timestamp_utc = "2026-06-06T17:30:00Z"
+        payload = self._write([m1, m2])
+        self.assertEqual(payload["messages"][1]["gap_seconds_before"], 5400)
+
 
 if __name__ == "__main__":
     unittest.main()

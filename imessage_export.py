@@ -778,9 +778,12 @@ def write_json(path: Path, messages: list[Message], metadata: dict):
     for m in messages:
         d = asdict(m)
         gap = 0
+        # Silently fall back to gap=0 on unparseable timestamp_utc — gap
+        # markers are a navigation aid, not load-bearing data. Failing the
+        # whole export would lose more value than a single wrong gap.
         if m.timestamp_utc:
             try:
-                dt = datetime.fromisoformat(m.timestamp_utc)
+                dt = datetime.fromisoformat(m.timestamp_utc.replace("Z", "+00:00"))
                 if prev_dt is not None:
                     gap = int((dt - prev_dt).total_seconds())
                 prev_dt = dt
