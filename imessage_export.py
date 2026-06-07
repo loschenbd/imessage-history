@@ -21,7 +21,9 @@ Privacy & Security ▸ Full Disk Access ▸ add your terminal app.
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
+import hashlib
 import json
 import os
 import re
@@ -163,6 +165,261 @@ TAPBACK_GLYPHS = {
     "Laughed": "😂", "Emphasized": "‼️", "Questioned": "❓",
     "Sticker": "🩹",
 }
+
+
+# ---------------------------------------------------------------------------
+# Redaction
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class RedactionConfig:
+    me_name: str
+    extra_names: list[str] = field(default_factory=list)
+    redact_phones: bool = True
+    redact_emails: bool = True
+    redact_urls: bool = True
+    case_sensitive: bool = False
+
+
+def _excel_letters(n: int) -> str:
+    """Spreadsheet-column-style letters: 0→A, 25→Z, 26→AA, 27→AB, …, 701→ZZ."""
+    if n < 0:
+        raise ValueError("_excel_letters requires n >= 0")
+    s = ""
+    n += 1  # shift to 1-indexed so the math works cleanly
+    while n > 0:
+        n, rem = divmod(n - 1, 26)
+        s = chr(ord("A") + rem) + s
+    return s
+
+
+class Redactor:
+    """Build a deterministic alias→pseudonym map for one conversation.
+
+    Inputs:
+      messages : list[Message]    (timeline order, as produced by export())
+      metadata : dict             (the metadata dict produced by export())
+      contacts : dict[str, str]   (handle → name, as loaded from contacts.csv)
+      config   : RedactionConfig
+
+    The map is built once at __init__ time and re-used by the redact_* methods.
+    """
+
+    def __init__(self, messages, metadata, contacts, config):
+        if not config.me_name:
+            raise ValueError("RedactionConfig.me_name must be non-empty")
+        self._messages  = messages
+        self._metadata  = metadata
+        self._contacts  = contacts or {}
+        self._config    = config
+        self._alias_to_pseudonym: dict[str, str] = {}
+        self._pseudonym_to_aliases: dict[str, list[str]] = {}
+        self._build_pseudonym_map()
+
+    def _assign_pseudonym(self, alias: str, pseudonym: str) -> None:
+        """Map alias → pseudonym. No-op if alias already mapped."""
+        if not alias or alias in self._alias_to_pseudonym:
+            return
+        self._alias_to_pseudonym[alias] = pseudonym
+        self._pseudonym_to_aliases.setdefault(pseudonym, []).append(alias)
+
+    def _new_pseudonym(self) -> str:
+        n = len(self._pseudonym_to_aliases)
+        return f"Person {_excel_letters(n)}"
+
+    def _ensure_person(self, primary_alias: str, *aliases: str) -> str:
+        """Get (or create) the pseudonym for primary_alias, registering aliases under it."""
+        existing = self._alias_to_pseudonym.get(primary_alias)
+        if existing is None:
+            existing = self._new_pseudonym()
+        self._assign_pseudonym(primary_alias, existing)
+        for a in aliases:
+            self._assign_pseudonym(a, existing)
+        return existing
+
+    def _build_pseudonym_map(self) -> None:
+        # 1. Device owner is always Person A.
+        self._ensure_person(self._config.me_name)
+
+        # 2. Walk the message timeline assigning new speakers.
+        for m in self._messages:
+            if m.is_from_me:
+                # Outgoing — author is me; nothing new to register.
+                continue
+            label  = m.author_label
+            handle = m.sender_handle
+            # Both label and handle (when present) belong to the same person.
+            if label:
+                self._ensure_person(label, *([handle] if handle else []))
+            elif handle:
+                self._ensure_person(handle)
+
+        # 3. Register all contact names (even ones not in this conversation —
+        #    they may be mentioned in body text from third-party speakers).
+        for handle, name in self._contacts.items():
+            if name:
+                self._ensure_person(name, handle)
+
+        # 4. Register --redact-names-file extras.
+        for extra in self._config.extra_names:
+            if extra:
+                self._ensure_person(extra)
+
+    def pseudonym_map(self) -> dict:
+        def _sort_key(item):
+            pseudonym = item[0]
+            letters = pseudonym.removeprefix("Person ")
+            return (len(letters), letters)
+        people = [
+            {"pseudonym": p, "aliases": list(aliases)}
+            for p, aliases in sorted(self._pseudonym_to_aliases.items(), key=_sort_key)
+        ]
+        return {
+            "aliases_to_pseudonym": dict(self._alias_to_pseudonym),
+            "people": people,
+        }
+
+    # PII regexes. Conservative; documented as best-effort in README.
+    # Phone uses a negative lookbehind for word chars so a leading "+" at the
+    # start of a token (e.g. "+15551234567" after a space) matches cleanly —
+    # \b doesn't sit between a non-word space and the non-word "+".
+    _PHONE_RE = re.compile(r"(?<!\w)\+?\d[\d\-().]{6,}\d(?!\w)")
+    _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+    _URL_RE   = re.compile(r"https?://[^\s<>\"'`]+?(?=[.,;!?)\]\}>]*(?:\s|$))")
+
+    def _ordered_aliases(self) -> list[str]:
+        """Aliases ordered longest-first so 'Alice Smith' wins over 'Alice'."""
+        return sorted(self._alias_to_pseudonym.keys(), key=len, reverse=True)
+
+    def _redact_text(self, s: str) -> str:
+        if not s:
+            return s
+        out = s
+        # Scrub PII first so an alias inside an email local-part
+        # ("alice@example.com") doesn't get partially substituted before the
+        # email regex can match the whole address.
+        if self._config.redact_phones:
+            out = self._PHONE_RE.sub("[PHONE]", out)
+        if self._config.redact_emails:
+            out = self._EMAIL_RE.sub("[EMAIL]", out)
+        if self._config.redact_urls:
+            out = self._URL_RE.sub("[URL]", out)
+        case_sensitive = self._config.case_sensitive
+        for alias in self._ordered_aliases():
+            pseudonym = self._alias_to_pseudonym[alias]
+            if case_sensitive:
+                out = out.replace(alias, pseudonym)
+            else:
+                # Case-insensitive literal replace. Loop so all occurrences fire.
+                # We rebuild lowercased indexes each pass since `out` shrinks/grows.
+                lower_alias = alias.lower()
+                start = 0
+                while True:
+                    idx = out.lower().find(lower_alias, start)
+                    if idx == -1:
+                        break
+                    out = out[:idx] + pseudonym + out[idx + len(alias):]
+                    start = idx + len(pseudonym)
+        return out
+
+    def redact_messages(self) -> list[Message]:
+        out = []
+        for m in self._messages:
+            new = copy.deepcopy(m)
+            if new.author_label in self._alias_to_pseudonym:
+                new.author_label = self._alias_to_pseudonym[new.author_label]
+            if new.sender_handle and new.sender_handle in self._alias_to_pseudonym:
+                new.sender_handle = self._alias_to_pseudonym[new.sender_handle]
+            new.text = self._redact_text(new.text)
+            if new.reaction:
+                rdict = dict(new.reaction)
+                if rdict.get("target_text"):
+                    rdict["target_text"] = self._redact_text(rdict["target_text"])
+                if rdict.get("target_author") in self._alias_to_pseudonym:
+                    rdict["target_author"] = self._alias_to_pseudonym[rdict["target_author"]]
+                new.reaction = rdict
+            out.append(new)
+        return out
+
+    def redact_metadata(self) -> dict:
+        out = copy.deepcopy(self._metadata)
+        for p in out.get("participants", []):
+            for key in ("handle", "resolved_name"):
+                v = p.get(key)
+                if v and v in self._alias_to_pseudonym:
+                    p[key] = self._alias_to_pseudonym[v]
+        # Chat headers carry the raw chat_identifier (a phone/email for 1:1s)
+        # and an optional display_name (a free-text group name). Run both
+        # through _redact_text so participant handles + PII regexes scrub
+        # them — otherwise the redacted JSON metadata leaks the real handle.
+        for c in out.get("chats", []):
+            for key in ("chat_identifier", "display_name"):
+                v = c.get(key)
+                if v:
+                    c[key] = self._redact_text(v)
+        # me_name in metadata stays as the original label so the AI-ready header
+        # accurately describes who "Person A" is in the redacted view.
+        if out.get("me_name") in self._alias_to_pseudonym:
+            out["me_name"] = self._alias_to_pseudonym[out["me_name"]]
+        return out
+
+    def chat_label(self) -> str:
+        # 1:1 → the other participant's pseudonym.
+        # Group → fall back to the existing chat_label() applied to redacted metadata.
+        red_md = self.redact_metadata()
+        return chat_label(red_md)
+
+
+# Token patterns + stopwords for --suggest-names.
+_PROPER_NOUN_RE = re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\b")
+_SUGGEST_STOPWORDS = {
+    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    "January", "February", "March", "April", "June", "July", "August",
+    "September", "October", "November", "December",
+    "The", "This", "That", "What", "Who", "Why", "How", "When", "Where",
+    "I", "My", "Me", "We", "Our", "Us", "He", "She", "It", "They", "Them",
+    "But", "And", "So", "Or", "If", "Yes", "No", "OK", "Okay", "Just",
+    "Hi", "Hey", "Hello", "Thanks", "Thank", "Sorry",
+}
+
+
+def suggest_names(messages: list[Message], contacts: dict[str, str]) -> int:
+    """Print proper-noun candidates not already in `contacts`.
+
+    Output format: comment-prefixed lines for context, one candidate per line.
+    User redirects to a file, deletes false positives, passes via
+    --redact-names-file.
+    """
+    known = {name.lower() for name in contacts.values() if name}
+    counts: dict[str, int] = {}
+    samples: dict[str, str] = {}
+
+    for m in messages:
+        if not m.text:
+            continue
+        for match in _PROPER_NOUN_RE.finditer(m.text):
+            tok = match.group(0)
+            if tok in _SUGGEST_STOPWORDS:
+                continue
+            if tok.lower() in known:
+                continue
+            counts[tok] = counts.get(tok, 0) + 1
+            if tok not in samples:
+                start = max(0, match.start() - 60)
+                end   = min(len(m.text), match.end() + 60)
+                samples[tok] = m.text[start:end].replace("\n", " ").strip()
+
+    # Drop singletons.
+    counts = {k: v for k, v in counts.items() if v >= 2}
+
+    print("# Proper-noun candidates not in contacts.csv.")
+    print("# Review and remove false positives, then pass via --redact-names-file.")
+    print("")
+    for tok in sorted(counts, key=lambda t: (-counts[t], t)):
+        print(f"# {counts[tok]}× — {samples[tok]!r}")
+        print(tok)
+    return 0
 
 
 def classify_tapback(amt: int) -> Optional[tuple[str, bool]]:
@@ -1140,6 +1397,26 @@ def build_parser() -> argparse.ArgumentParser:
                      help="Resolve attachment filenames per message")
     out.add_argument("--limit", type=int, help="Cap number of messages")
 
+    red = p.add_argument_group("redaction / pseudonymization")
+    red.add_argument("--redact", action="store_true",
+                     help="Also write a parallel set of redacted files "
+                          "(conversation_redacted.* + pseudonym_map.json).")
+    red.add_argument("--redact-only", action="store_true",
+                     help="Write ONLY the redacted set. Folder name uses the "
+                          "pseudonymized label + a stable 4-char chat-id hash.")
+    red.add_argument("--redact-names-file", default=None,
+                     help="Flat text file, one extra name per line. All "
+                          "pseudonymized into the same Person X namespace.")
+    red.add_argument("--no-redact-phones", action="store_true",
+                     help="Disable phone-number scrubbing in body text.")
+    red.add_argument("--no-redact-emails", action="store_true",
+                     help="Disable email-address scrubbing in body text.")
+    red.add_argument("--no-redact-urls", action="store_true",
+                     help="Disable URL scrubbing in body text.")
+    red.add_argument("--suggest-names", action="store_true",
+                     help="Scan the selected window for proper-noun "
+                          "candidates and print them. Skips export.")
+
     p.add_argument("--db", default=str(DEFAULT_DB),
                    help=f"Path to chat.db (default: {DEFAULT_DB})")
     return p
@@ -1152,6 +1429,8 @@ def validate_args(args):
     if args.date and (args.start_datetime or args.end_datetime):
         raise SystemExit("Use either --date+--start-time/--end-time OR "
                          "--start-datetime/--end-datetime, not both.")
+    if args.suggest_names and (args.redact or args.redact_only):
+        raise SystemExit("--suggest-names cannot be combined with --redact / --redact-only")
 
 
 def main(argv=None) -> int:
@@ -1187,6 +1466,30 @@ def _run(args, conn) -> int:
     if args.list_contacts:
         return list_contacts_csv(conn, unit, Path(args.contacts) if args.contacts else None)
 
+    if args.suggest_names:
+        chat_ids = resolve_chat_ids(
+            conn,
+            chat_id=args.chat_id,
+            chat_identifier=args.chat_identifier,
+            participant=args.participant,
+        )
+        if not chat_ids:
+            print("ERROR: no matching chat found.", file=sys.stderr)
+            return 1
+        contacts = load_contacts(Path(args.contacts)) if args.contacts else {}
+        window = resolve_window(args, unit)
+        messages, _ = export(
+            conn,
+            chat_ids=chat_ids,
+            contacts=contacts,
+            me_name=args.me_name,
+            window=window,
+            limit=args.limit,
+            include_attachments=False,
+            unit=unit,
+        )
+        return suggest_names(messages, contacts)
+
     if not (args.chat_id or args.chat_identifier or args.participant):
         print("ERROR: choose --chat-id, --chat-identifier, --participant, --list, "
               "or --list-contacts",
@@ -1220,24 +1523,82 @@ def _run(args, conn) -> int:
         unit=unit,
     )
 
-    # Output directory: exports/<contact-or-group>/<YYYY-MM-DD>/
+    # Build the redactor if asked. Both --redact and --redact-only enable it.
+    redactor = None
+    red_messages: list[Message] | None = None
+    red_metadata: dict | None = None
+    if args.redact or args.redact_only:
+        extra_names = []
+        if args.redact_names_file:
+            try:
+                with open(args.redact_names_file) as f:
+                    extra_names = [ln.strip() for ln in f
+                                   if ln.strip() and not ln.lstrip().startswith("#")]
+            except OSError as e:
+                raise SystemExit(f"Cannot read --redact-names-file {args.redact_names_file}: {e}")
+        rcfg = RedactionConfig(
+            me_name=args.me_name,
+            extra_names=extra_names,
+            redact_phones=not args.no_redact_phones,
+            redact_emails=not args.no_redact_emails,
+            redact_urls=not args.no_redact_urls,
+        )
+        redactor     = Redactor(messages, metadata, contacts, rcfg)
+        red_messages = redactor.redact_messages()
+        red_metadata = redactor.redact_metadata()
+
+    # Output directory: exports/<label>/<YYYY-MM-DD>/.
     # Date = window start if a window was given, else the actual first message's
     # date, else today. Re-exporting the same (label, date) overwrites.
-    label = chat_label(metadata)
+    # In --redact-only mode, folder uses the pseudonymized label + a stable
+    # 4-char hash of chat_ids so distinct chats don't collide on "Person B".
+    # slugify() would mash the space into a dash; for the redacted folder name
+    # we bypass it so "Person B-a3f9" stays readable.
     win = metadata["window"]
     date_str = (
         (win.get("local_start") or "")[:10]
         or (metadata.get("actual_first_local") or "")[:10]
         or datetime.now().strftime("%Y-%m-%d")
     )
-    out_dir = Path(args.output_dir) / slugify(label) / date_str
+    if args.redact_only and redactor is not None:
+        chat_ids_str = ",".join(str(c) for c in metadata["chat_ids"])
+        chash = hashlib.sha1(chat_ids_str.encode()).hexdigest()[:4]
+        base = redactor.chat_label()
+        # Permit "Person X" verbatim (1:1 chat with one pseudonym). Permit
+        # "Person A+Person B+..." (group with joined pseudonyms). Otherwise
+        # — e.g., a raw group display_name slipped through — slugify for
+        # filesystem safety, and strip leading dots so traversal-style
+        # prefixes ("../") can't survive as a leading "..-" segment.
+        if not re.match(r"^Person [A-Z]+(\+Person [A-Z]+)*$", base):
+            base = slugify(base).lstrip(".")
+            if not base:
+                base = "chat"
+        folder_name = f"{base}-{chash}"
+    else:
+        folder_name = slugify(chat_label(metadata))
+    out_dir = Path(args.output_dir) / folder_name / date_str
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    write_csv(out_dir / "conversation.csv", messages)
-    write_json(out_dir / "conversation.json", messages, metadata)
-    write_txt(out_dir / "conversation.txt", messages)
-    write_markdown(out_dir / "conversation.md", messages, metadata)
-    write_ai_ready(out_dir / "conversation_ai_ready.txt", messages, metadata)
+    # Write the originals UNLESS in --redact-only mode.
+    if not args.redact_only:
+        write_csv      (out_dir / "conversation.csv",          messages)
+        write_json     (out_dir / "conversation.json",         messages, metadata)
+        write_txt      (out_dir / "conversation.txt",          messages)
+        write_markdown (out_dir / "conversation.md",           messages, metadata)
+        write_ai_ready (out_dir / "conversation_ai_ready.txt", messages, metadata)
+
+    # Write the redacted set if we built a redactor. We keep the "_redacted"
+    # suffix even in --redact-only mode so the file names always signal that
+    # the contents have been pseudonymized.
+    if redactor is not None:
+        write_csv      (out_dir / "conversation_redacted.csv",          red_messages)
+        write_json     (out_dir / "conversation_redacted.json",         red_messages, red_metadata)
+        write_txt      (out_dir / "conversation_redacted.txt",          red_messages)
+        write_markdown (out_dir / "conversation_redacted.md",           red_messages, red_metadata)
+        write_ai_ready (out_dir / "conversation_redacted_ai_ready.txt", red_messages, red_metadata)
+        with open(out_dir / "pseudonym_map.json", "w") as f:
+            json.dump(redactor.pseudonym_map(), f, indent=2, ensure_ascii=False)
+
     write_prompt(out_dir / "analysis_prompt.txt")
 
     print(f"Exported {len(messages)} messages → {out_dir}")

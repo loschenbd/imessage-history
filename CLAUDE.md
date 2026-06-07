@@ -65,6 +65,11 @@ Output lands in `exports/<contact-or-group>/<YYYY-MM-DD>/` with:
   `write_ai_ready`) take `(path, messages, metadata)` and don't share state.
 - Tests live under `tests/` and use stdlib `unittest` so they run with no
   external dependencies.
+- The `Redactor` component runs as an optional second pass over messages
+  + metadata. Writers stay unaware of redaction — they always receive
+  ready-to-render objects. When adding a new writer, you don't need to
+  handle redaction at all; just make sure it consumes the standard
+  `Message` / `metadata` shapes.
 
 ## Schema gotchas to remember
 
@@ -101,6 +106,9 @@ Apple's `chat.db` has several quirks that silently corrupt naive output:
   threads, recommend a local model (Ollama, LM Studio).
 - **Permissions.** The exporter sets `os.umask(0o077)` so new files are `600`
   and new dirs `700`. If you add I/O, keep that constraint.
+- The `pseudonym_map.json` produced by `--redact` / `--redact-only` is
+  the de-redaction key. Treat it like a password — don't share it
+  alongside the redacted export.
 
 ## Useful one-shot diagnostics
 

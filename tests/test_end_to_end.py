@@ -138,7 +138,7 @@ class EndToEndExportTests(unittest.TestCase):
         j = json.loads((out / "conversation.json").read_text())
         md = j["metadata"]
         self.assertEqual(md["me_name"], "Tester")
-        self.assertEqual(md["message_count"], 5)
+        self.assertEqual(md["message_count"], 7)
         self.assertEqual(len(md["participants"]), 1)
         self.assertEqual(md["participants"][0]["handle"], "+15551234567")
 
@@ -149,6 +149,141 @@ class EndToEndExportTests(unittest.TestCase):
         self.assertEqual(out.stat().st_mode & 0o777, 0o700)
         for f in out.iterdir():
             self.assertEqual(f.stat().st_mode & 0o777, 0o600, f"{f.name} not 600")
+
+
+class RedactionEndToEndTests(EndToEndExportTests):
+    """Run the existing fixture export with --redact / --redact-only."""
+
+    def setUp(self):
+        super().setUp()
+        # The adversarial sweep tests need a real contact name registered so
+        # we can prove name-based redaction actually scrubs it. The base
+        # fixture's handle is +15551234567; map it to "Alice".
+        contacts = self.tmp_path / "contacts.csv"
+        contacts.write_text("handle,name\n+15551234567,Alice\n")
+        self._contacts_path = contacts
+
+    def _redacted_run(self, extra=()):
+        argv = [
+            "--db", str(self.db_path),
+            "--chat-id", "1",
+            "--me-name", "Tester",
+            "--output-dir", str(self.out_dir),
+            "--contacts", str(self._contacts_path),
+            *extra,
+        ]
+        rc = ie.main(argv)
+        self.assertEqual(rc, 0)
+
+    def _resolve_first_export_dir(self) -> Path:
+        contacts = list(self.out_dir.iterdir())
+        self.assertGreaterEqual(len(contacts), 1)
+        dates = list(contacts[0].iterdir())
+        return dates[0]
+
+    def test_redact_flag_produces_both_versions(self):
+        self._redacted_run(extra=["--redact"])
+        out = self._resolve_first_export_dir()
+        for name in (
+            "conversation.txt", "conversation_redacted.txt",
+            "conversation.json", "conversation_redacted.json",
+            "conversation.csv", "conversation_redacted.csv",
+            "conversation.md", "conversation_redacted.md",
+            "conversation_ai_ready.txt", "conversation_redacted_ai_ready.txt",
+            "pseudonym_map.json",
+        ):
+            self.assertTrue((out / name).exists(), f"{name} missing")
+
+    def test_redact_only_skips_originals(self):
+        self._redacted_run(extra=["--redact-only"])
+        out = self._resolve_first_export_dir()
+        for name in ("conversation.txt", "conversation.json", "conversation.csv",
+                     "conversation.md", "conversation_ai_ready.txt"):
+            self.assertFalse((out / name).exists(), f"{name} should not exist in redact-only mode")
+        for name in ("conversation_redacted.txt", "pseudonym_map.json"):
+            self.assertTrue((out / name).exists(), f"{name} missing")
+
+    def test_redact_only_folder_includes_hash(self):
+        self._redacted_run(extra=["--redact-only"])
+        contacts = list(self.out_dir.iterdir())
+        self.assertEqual(len(contacts), 1)
+        name = contacts[0].name
+        self.assertTrue(name.startswith("Person"), f"unexpected folder name: {name}")
+        self.assertRegex(name, r"^Person [A-Z]+-[0-9a-f]{4}$")
+
+    def test_redacted_csv_has_no_real_handle(self):
+        self._redacted_run(extra=["--redact"])
+        out = self._resolve_first_export_dir()
+        red = (out / "conversation_redacted.csv").read_text()
+        self.assertNotIn("+15551234567", red)
+        self.assertIn("Person",          red)
+
+    def test_pseudonym_map_perms_are_600(self):
+        self._redacted_run(extra=["--redact"])
+        out = self._resolve_first_export_dir()
+        pmap = out / "pseudonym_map.json"
+        self.assertEqual(pmap.stat().st_mode & 0o777, 0o600)
+
+    def test_redact_only_folder_safe_for_unsanitized_label(self):
+        """If chat_label() ever returns something with path metacharacters,
+        --redact-only must still produce a safe folder name."""
+        # Patch redactor.chat_label to return a malicious string.
+        from unittest.mock import patch
+        with patch.object(ie.Redactor, "chat_label", lambda self: "../etc/passwd"):
+            self._redacted_run(extra=["--redact-only"])
+        contacts = list(self.out_dir.iterdir())
+        self.assertEqual(len(contacts), 1)
+        name = contacts[0].name
+        # Must not contain a literal slash and must not start with ".."
+        self.assertNotIn("/", name)
+        self.assertFalse(name.startswith(".."))
+
+    def test_no_real_handle_appears_in_any_redacted_file(self):
+        self._redacted_run(extra=["--redact"])
+        out = self._resolve_first_export_dir()
+        for name in ("conversation_redacted.txt", "conversation_redacted.csv",
+                     "conversation_redacted.json", "conversation_redacted.md",
+                     "conversation_redacted_ai_ready.txt"):
+            text = (out / name).read_text()
+            self.assertNotIn("+15551234567", text, f"{name} leaked the real handle")
+
+    def test_no_real_contact_name_appears_in_any_redacted_file(self):
+        self._redacted_run(extra=["--redact"])
+        out = self._resolve_first_export_dir()
+        for name in ("conversation_redacted.txt", "conversation_redacted.csv",
+                     "conversation_redacted.json", "conversation_redacted.md",
+                     "conversation_redacted_ai_ready.txt"):
+            text = (out / name).read_text()
+            self.assertNotIn("Alice", text, f"{name} leaked the real name")
+
+    def test_redacted_body_pii_scrubbed(self):
+        self._redacted_run(extra=["--redact"])
+        out = self._resolve_first_export_dir()
+        red_text = (out / "conversation_redacted.txt").read_text()
+        self.assertNotIn("+15557654321",        red_text)
+        self.assertNotIn("alice@example.com",   red_text)
+        self.assertNotIn("https://example.com", red_text)
+        self.assertIn("[PHONE]", red_text)
+        self.assertIn("[EMAIL]", red_text)
+        self.assertIn("[URL]",   red_text)
+
+
+class SuggestNamesEndToEndTests(EndToEndExportTests):
+    def test_suggest_names_finds_carol(self):
+        from io import StringIO
+        old = sys.stdout
+        try:
+            sys.stdout = buf = StringIO()
+            rc = ie.main([
+                "--db", str(self.db_path),
+                "--chat-id", "1",
+                "--me-name", "Tester",
+                "--suggest-names",
+            ])
+            self.assertEqual(rc, 0)
+            self.assertIn("Carol", buf.getvalue())
+        finally:
+            sys.stdout = old
 
 
 if __name__ == "__main__":
