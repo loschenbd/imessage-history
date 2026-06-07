@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "imessage-history"
+version = "0.1.0"
+description = "Export a single iMessage conversation from macOS chat.db into AI-ready files."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [{ name = "Ben Loschen" }]
+keywords = ["imessage", "macos", "messages", "export", "chat.db", "sqlite", "archive"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS :: MacOS X",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Communications :: Chat",
+  "Topic :: Utilities",
+]
+# Stdlib only — no runtime dependencies.
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/benjaminloschen/imessage-history"
+Issues    = "https://github.com/benjaminloschen/imessage-history/issues"
+
+[project.scripts]
+imessage-export = "imessage_export:main"
+
+[tool.setuptools]
+py-modules = ["imessage_export"]

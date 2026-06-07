@@ -985,6 +985,13 @@ def main(argv=None) -> int:
     os.umask(0o077)
 
     conn = open_db(Path(args.db))
+    try:
+        return _run(args, conn)
+    finally:
+        conn.close()
+
+
+def _run(args, conn) -> int:
     unit = detect_date_unit(conn)
 
     if args.list:

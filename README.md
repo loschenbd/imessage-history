@@ -1,5 +1,10 @@
 # imessage-history
 
+[![tests](https://github.com/benjaminloschen/imessage-history/actions/workflows/test.yml/badge.svg)](https://github.com/benjaminloschen/imessage-history/actions/workflows/test.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Stdlib only](https://img.shields.io/badge/dependencies-stdlib%20only-brightgreen.svg)](pyproject.toml)
+
 Export a single iMessage conversation from the local macOS Messages database into
 AI-ready files with explicit speaker attribution on every line.
 
@@ -233,3 +238,39 @@ python3 imessage_export.py --chat-id <ID> --me-name "Ben" \
 
 Then paste `conversation_ai_ready.txt` into your AI of choice together with
 `analysis_prompt.txt`.
+
+## Acknowledgments
+
+This project owes a debt to several pieces of prior art. If you want a more
+batteries-included exporter (HTML output, attachment handling, edit history
+extraction, Diagnostic Reports support), reach for one of these instead:
+
+- [`imessage-exporter`](https://github.com/ReagentX/imessage-exporter) (Rust)
+  — the de facto reference implementation for parsing `chat.db`. Handles
+  `attributedBody` typedstreams, edit history, and tapbacks correctly across
+  multiple macOS versions. Several quirks documented in this codebase
+  (length-prefix encoding, `associated_message_guid` prefix format, tapback
+  type codes) were cross-checked against its source.
+- Apple's published [Messages
+  documentation](https://developer.apple.com/documentation/usernotifications/messages_filter)
+  — sparse but authoritative on the public-facing schema; everything else is
+  reverse-engineered from observed DBs.
+
+This repo's goals are deliberately narrower: a single Python file, stdlib
+only, focused on producing AI-prompt-friendly text from one conversation at
+a time.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). The short version: don't paste real
+message content into issues / PRs, run the test suite, and keep new
+dependencies out.
+
+## Security
+
+For privacy- or read-only-guard-related issues, see [SECURITY.md](SECURITY.md).
+Do not open public issues for security reports.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
