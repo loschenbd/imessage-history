@@ -79,8 +79,32 @@ class ImessageExportApp(App):
         )
         self.state.me_name = self._defaults.me_name or "Me"
 
-        self.conn = open_db(DEFAULT_DB)
+        try:
+            self.conn = open_db(DEFAULT_DB)
+        except Exception as exc:
+            from .modals import ErrorModal
+            self.push_screen(ErrorModal(
+                title="Cannot read chat.db",
+                body=(
+                    "Messages requires Full Disk Access for the process\n"
+                    "running Python.\n\n"
+                    "Open System Settings → Privacy & Security → Full Disk Access\n"
+                    f"and add: {__import__('sys').executable}\n\n"
+                    f"({exc})"
+                ),
+                quit_on_close=True,
+            ))
+            return
         self.state.chats = [dict(r) for r in list_recent_chats(self.conn, 100)]
+
+        if not self.state.chats:
+            from .modals import ErrorModal
+            self.push_screen(ErrorModal(
+                title="No chats in chat.db",
+                body="Make sure Messages is set up on this Mac and that you've sent or received at least one message.",
+                quit_on_close=True,
+            ))
+            return
 
         sidebar = self.query_one(Sidebar)
         sidebar._all_chats = self.state.chats
@@ -315,37 +339,50 @@ class ImessageExportApp(App):
         from ...cli import _run, DEFAULT_DB
         from .state import resolved_window, reset_after_export
 
-        window = resolved_window(self.state)
-        ns = argparse.Namespace(
-            chat_id=self.state.selected_chat_id,
-            chat_identifier=None, participant=None,
-            list=False, list_limit=30, list_contacts=False,
-            from_date=window.get("from_date"), to_date=window.get("to_date"),
-            date=window.get("date"),
-            start_time=window.get("start_time"), end_time=window.get("end_time"),
-            start_datetime=None, end_datetime=None,
-            output_dir=str(self.state.output_dir),
-            me_name=self.state.me_name,
-            contacts=str(self.state.contacts_path) if self.state.contacts_path else None,
-            include_attachments=False,
-            limit=None,
-            db=str(DEFAULT_DB),
-            redact=self.state.redact.get("redact", False),
-            redact_only=self.state.redact.get("redact_only", False),
-            redact_names_file=self.state.redact.get("redact_names_file"),
-            no_redact_phones=self.state.redact.get("no_redact_phones", False),
-            no_redact_emails=self.state.redact.get("no_redact_emails", False),
-            no_redact_urls=self.state.redact.get("no_redact_urls", False),
-            suggest_names=False,
-            build_contacts=False,
-            wizard=False,
-            app=False,
-        )
-        rc = _run(ns, self.conn)
-        if rc == 0:
-            n = self._count_messages_in_window(window)
-            reset_after_export(self.state, success_tag=f"✓ Exported {n} msgs → {self.state.output_dir}")
+        try:
+            window = resolved_window(self.state)
+            ns = argparse.Namespace(
+                chat_id=self.state.selected_chat_id,
+                chat_identifier=None, participant=None,
+                list=False, list_limit=30, list_contacts=False,
+                from_date=window.get("from_date"), to_date=window.get("to_date"),
+                date=window.get("date"),
+                start_time=window.get("start_time"), end_time=window.get("end_time"),
+                start_datetime=None, end_datetime=None,
+                output_dir=str(self.state.output_dir),
+                me_name=self.state.me_name,
+                contacts=str(self.state.contacts_path) if self.state.contacts_path else None,
+                include_attachments=False,
+                limit=None,
+                db=str(DEFAULT_DB),
+                redact=self.state.redact.get("redact", False),
+                redact_only=self.state.redact.get("redact_only", False),
+                redact_names_file=self.state.redact.get("redact_names_file"),
+                no_redact_phones=self.state.redact.get("no_redact_phones", False),
+                no_redact_emails=self.state.redact.get("no_redact_emails", False),
+                no_redact_urls=self.state.redact.get("no_redact_urls", False),
+                suggest_names=False,
+                build_contacts=False,
+                wizard=False,
+                app=False,
+            )
+            rc = _run(ns, self.conn)
+            if rc == 0:
+                n = self._count_messages_in_window(window)
+                reset_after_export(self.state, success_tag=f"✓ Exported {n} msgs → {self.state.output_dir}")
+        except Exception as exc:
+            import traceback
+            tb = traceback.format_exc()
+            self.call_from_thread(self._show_exception_modal, str(exc), tb)
+            return
         self.call_from_thread(self._post_export_refresh)
+
+    def _show_exception_modal(self, exc_str: str, tb: str) -> None:
+        from .modals import ErrorModal
+        self.push_screen(ErrorModal(
+            title="Export failed",
+            body=f"{exc_str}\n\n— traceback —\n{tb}",
+        ))
 
     def _post_export_refresh(self) -> None:
         # Repaint marks (now cleared) and let the future status-line widget refresh.

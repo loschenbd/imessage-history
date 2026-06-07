@@ -352,3 +352,39 @@ class HelpModal(ModalScreen[None]):
 
     def on_button_pressed(self, event) -> None:
         self.dismiss(None)
+
+
+class ErrorModal(ModalScreen[None]):
+    """Generic error modal — used for FDA denial, malformed contacts, no chats, exceptions."""
+
+    DEFAULT_CSS = """
+    ErrorModal {
+        align: center middle;
+    }
+    ErrorModal > Vertical {
+        width: 76;
+        padding: 1 2;
+        border: thick $error;
+        background: $surface;
+    }
+    """
+
+    BINDINGS = [("escape", "dismiss", "Close"), ("enter", "dismiss", "Close")]
+
+    def __init__(self, *, title: str, body: str, quit_on_close: bool = False) -> None:
+        super().__init__()
+        self._title = title
+        self._body = body
+        self._quit_on_close = quit_on_close
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static(self._title, classes="modal-title")
+            yield Static(self._body)
+            yield Button("Quit" if self._quit_on_close else "OK", id="ok", variant="primary")
+
+    def on_button_pressed(self, event) -> None:
+        if self._quit_on_close:
+            self.app.exit(2)
+        else:
+            self.dismiss(None)
