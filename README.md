@@ -72,13 +72,13 @@ The interactive app and the Rich/Questionary wizard share a two-palette colour s
 
 The theme auto-detects from your macOS Appearance setting (System Settings → Appearance → Light/Dark). To override:
 
-- **One-shot flag:** `imessage-export tui --theme dawnfox` (or `terafox`, or `auto`)
-- **Env var:** `IMESSAGE_EXPORT_THEME=dawnfox imessage-export tui`
+- **One-shot flag:** `imessage-export --theme dawnfox` (or `terafox`, or `auto`)
+- **Env var:** `IMESSAGE_EXPORT_THEME=dawnfox imessage-export`
 - **Persisted:** open Settings inside the app (`s`), pick Theme → Dawnfox / Terafox / Auto-detect, save.
 
-Persisted choice lives in `~/.config/imessage-export/defaults.json` under `theme_override` (`"dawnfox"`, `"terafox"`, or absent for auto).
+Persisted choice lives in `~/.config/imessage-export/recent.json` under `theme_override` (`"dawnfox"`, `"terafox"`, or absent for auto).
 
-Auto-detect uses `defaults read -g AppleInterfaceStyle` on macOS only; on other platforms (or when the read fails) the app falls back to terafox.
+Auto-detect uses `defaults read -g AppleInterfaceStyle` on macOS only; on other platforms (or when the read fails) the app falls back to dawnfox.
 
 ## Privacy & scope
 
