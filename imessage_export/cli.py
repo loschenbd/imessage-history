@@ -89,6 +89,18 @@ def build_parser() -> argparse.ArgumentParser:
              "handle,name CSV (default: contacts.csv). Skips export.",
     )
 
+    tui = p.add_argument_group("interactive mode")
+    tui.add_argument(
+        "--wizard",
+        action="store_true",
+        help="Use the linear Questionary wizard instead of the Textual app.",
+    )
+    tui.add_argument(
+        "--app",
+        action="store_true",
+        help="Force the Textual app even when other flags are present.",
+    )
+
     red = p.add_argument_group("redaction / pseudonymization")
     red.add_argument("--redact", action="store_true",
                      help="Also write a parallel set of redacted files "
@@ -146,8 +158,14 @@ def _dispatch(args, argv, parser) -> int:
         or args.date or args.build_contacts
     )
 
-    if no_explicit_args and is_tty and not is_ci and not has_action_flag:
+    if args.app:
+        return _run_app()
+
+    if args.wizard and not has_action_flag:
         return _run_wizard()
+
+    if no_explicit_args and is_tty and not is_ci and not has_action_flag:
+        return _run_app()
 
     if args.build_contacts is not None:
         from .contacts_macos import build_contacts_csv
@@ -171,6 +189,21 @@ def _dispatch(args, argv, parser) -> int:
         return _run(args, conn)
     finally:
         conn.close()
+
+
+def _run_app() -> int:
+    """Enter the Textual app. Requires the [tui] extra."""
+    try:
+        from .tui.app import run as run_app
+    except ImportError:
+        print(
+            "imessage-export: interactive mode needs the [tui] extra.\n"
+            "  pip install 'imessage-history[tui]'\n"
+            "Or run headless:  imessage-export --list",
+            file=sys.stderr,
+        )
+        return 2
+    return run_app()
 
 
 def _run_wizard() -> int:
