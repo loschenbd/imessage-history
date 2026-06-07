@@ -255,6 +255,22 @@ class RedactTextTests(unittest.TestCase):
         out = r._redact_text("link (https://example.com)")
         self.assertEqual(out, "link ([URL])")
 
+    def test_alias_not_matched_inside_longer_word(self):
+        # Regression: me_name="Ben" was matching inside "Bend" (city) and
+        # producing "Person Ad" — boundary check prevents this.
+        r = self._make()
+        self.assertEqual(
+            r._redact_text("home base for Bend!"),
+            "home base for Bend!",
+        )
+
+    def test_alias_matched_at_string_boundaries(self):
+        # Ensure boundary regex still matches when alias is at start/end/punct.
+        r = self._make()
+        self.assertEqual(r._redact_text("Alice."),       "Person B.")
+        self.assertEqual(r._redact_text("(Alice)"),       "(Person B)")
+        self.assertEqual(r._redact_text("Alice, Alice"),  "Person B, Person B")
+
 
 class RedactMessagesTests(unittest.TestCase):
     def _make(self):
