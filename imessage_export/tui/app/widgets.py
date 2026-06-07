@@ -111,6 +111,40 @@ class Sidebar(Vertical):
                 self.post_message(self.ChatSelected(chat_id))
                 break
 
+    def on_key(self, event) -> None:
+        """Type-to-filter: redirect printable keystrokes from the list to the filter.
+
+        - When the list has focus and the user types a printable single character,
+          focus the filter input and forward the character via insert_text_at_cursor.
+        - When the filter has focus and Esc is pressed, clear the filter and refocus
+          the list. Esc events from widgets outside the sidebar pass through (the
+          `focused is filter_input` guard ensures we don't swallow them).
+        - Arrow keys are non-printable (`event.character is None`), so they always
+          flow through to whatever widget currently has focus.
+        """
+        list_view = self.query_one("#sidebar-list", ListView)
+        filter_input = self.query_one("#sidebar-filter", Input)
+        focused = self.app.focused
+
+        if (
+            focused is list_view
+            and event.character
+            and len(event.character) == 1
+            and event.character.isprintable()
+        ):
+            filter_input.focus()
+            filter_input.insert_text_at_cursor(event.character)
+            event.prevent_default()
+            event.stop()
+            return
+
+        if focused is filter_input and event.key == "escape":
+            filter_input.value = ""
+            list_view.focus()
+            event.prevent_default()
+            event.stop()
+            return
+
 
 class HistoryView(VerticalScroll):
     """Scrollable rendered chat history.
@@ -383,14 +417,26 @@ class StatusLine(Static):
     }
     """
 
+    def __init__(self, *, id: str | None = None) -> None:
+        super().__init__(id=id)
+        self._focus_region: str = "sidebar"
+
+    def set_focus_region(self, region: str) -> None:
+        """Set the focus chip tag and refresh the rendered line."""
+        self._focus_region = region
+        try:
+            self.update_from_state(self.app.state)  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
     def update_from_state(self, state) -> None:
+        chip = f"[{self._focus_region}]"
         if state.last_export_status:
-            self.update(state.last_export_status)
+            self.update(f"{chip}  {state.last_export_status}")
             return
         from .state import resolved_window, _format_window
         w = resolved_window(state)
         window_str = _format_window(w)
-
         source = {
             "selection": "from selection",
             "typed":     "from Window modal",
@@ -399,7 +445,7 @@ class StatusLine(Static):
         contacts_str = f"contacts: {state.contacts_path.name}" if state.contacts_path else "contacts: none"
         redact_str = "redact: on" if state.redact else "redact: off"
         self.update(
-            f"window: {window_str} ({source}) · output: {state.output_dir} · {contacts_str} · {redact_str}"
+            f"{chip}  window: {window_str} ({source}) · output: {state.output_dir} · {contacts_str} · {redact_str}"
         )
 
 

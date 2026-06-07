@@ -46,8 +46,10 @@ class ImessageExportApp(App):
 
     Sidebar { background: $surface; border-right: solid $panel; }
     Sidebar > .selected { background: $panel; color: $primary; text-style: bold; }
+    Sidebar.region-active { border-right: thick $accent; }
 
     HistoryView { background: $background; color: $foreground; }
+    HistoryView.region-active { border-left: thick $accent; }
     HistoryView .day-header { color: $day-header; text-style: bold; }
     HistoryView .gap-marker { color: $muted; text-style: italic; }
     HistoryView .speaker-other { color: $primary; text-style: bold; }
@@ -56,6 +58,7 @@ class ImessageExportApp(App):
 
     StatusLine { background: $surface; color: $foreground; }
     ActionBar  { background: $panel;   color: $foreground; }
+    ActionBar.region-active { border-top: thick $accent; }
     ActionBar .key { color: $primary; text-style: bold; }
     """
 
@@ -380,6 +383,39 @@ class ImessageExportApp(App):
             last_chat_id=self.state.selected_chat_id,
             theme_override=self._defaults.theme_override if self._defaults else None,
         ))
+
+    def on_descendant_focus(self, event) -> None:
+        """Whenever focus changes, mark exactly one region as active."""
+        from .widgets import Sidebar, HistoryView, ActionBar
+        active_region = None
+        w = event.widget
+        while w is not None:
+            if isinstance(w, (Sidebar, HistoryView, ActionBar)):
+                active_region = w
+                break
+            w = w.parent
+        for region_cls in (Sidebar, HistoryView, ActionBar):
+            try:
+                region = self.query_one(region_cls)
+            except Exception:
+                continue
+            region.set_class(region is active_region, "region-active")
+
+        # Update the status chip too.
+        from .widgets import StatusLine
+        tag = "sidebar"
+        if active_region is not None:
+            from .widgets import HistoryView, ActionBar
+            if isinstance(active_region, HistoryView):
+                tag = "history"
+            elif isinstance(active_region, ActionBar):
+                tag = "actions"
+            else:
+                tag = "sidebar"
+        try:
+            self.query_one(StatusLine).set_focus_region(tag)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Task 10: RedactModal
