@@ -348,5 +348,50 @@ class CliArgsTests(unittest.TestCase):
             ])
 
 
+class SuggestNamesTests(unittest.TestCase):
+    def _capture_stdout(self, fn):
+        from io import StringIO
+        old = sys.stdout
+        try:
+            sys.stdout = buf = StringIO()
+            fn()
+            return buf.getvalue()
+        finally:
+            sys.stdout = old
+
+    def test_finds_proper_noun_not_in_contacts(self):
+        messages = [
+            _msg(1, is_from_me=0, author_label="Alice",
+                 text="Carol said she'd be here by 7."),
+            _msg(2, is_from_me=0, author_label="Alice",
+                 text="Carol is bringing dessert."),
+        ]
+        out = self._capture_stdout(
+            lambda: ie.suggest_names(messages, contacts={"+15551234567": "Alice"})
+        )
+        self.assertIn("Carol", out)
+
+    def test_excludes_existing_contacts(self):
+        messages = [
+            _msg(1, is_from_me=0, author_label="Alice", text="Alice spoke twice. Alice agreed."),
+        ]
+        out = self._capture_stdout(
+            lambda: ie.suggest_names(messages, contacts={"+15551234567": "Alice"})
+        )
+        self.assertNotIn("\nAlice\n", out)
+
+    def test_excludes_stopwords_and_singletons(self):
+        messages = [
+            _msg(1, is_from_me=0, author_label="Alice",
+                 text="Monday I went to The Store. The bakery was closed."),
+        ]
+        out = self._capture_stdout(
+            lambda: ie.suggest_names(messages, contacts={})
+        )
+        self.assertNotIn("Monday", out)
+        self.assertNotIn("The",    out)
+        self.assertNotIn("I ",     out)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -268,5 +268,23 @@ class RedactionEndToEndTests(EndToEndExportTests):
         self.assertIn("[URL]",   red_text)
 
 
+class SuggestNamesEndToEndTests(EndToEndExportTests):
+    def test_suggest_names_finds_carol(self):
+        from io import StringIO
+        old = sys.stdout
+        try:
+            sys.stdout = buf = StringIO()
+            rc = ie.main([
+                "--db", str(self.db_path),
+                "--chat-id", "1",
+                "--me-name", "Tester",
+                "--suggest-names",
+            ])
+            self.assertEqual(rc, 0)
+            self.assertIn("Carol", buf.getvalue())
+        finally:
+            sys.stdout = old
+
+
 if __name__ == "__main__":
     unittest.main()

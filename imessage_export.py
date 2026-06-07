@@ -370,6 +370,58 @@ class Redactor:
         return chat_label(red_md)
 
 
+# Token patterns + stopwords for --suggest-names.
+_PROPER_NOUN_RE = re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\b")
+_SUGGEST_STOPWORDS = {
+    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    "January", "February", "March", "April", "June", "July", "August",
+    "September", "October", "November", "December",
+    "The", "This", "That", "What", "Who", "Why", "How", "When", "Where",
+    "I", "My", "Me", "We", "Our", "Us", "He", "She", "It", "They", "Them",
+    "But", "And", "So", "Or", "If", "Yes", "No", "OK", "Okay", "Just",
+    "Hi", "Hey", "Hello", "Thanks", "Thank", "Sorry",
+}
+
+
+def suggest_names(messages: list[Message], contacts: dict[str, str]) -> int:
+    """Print proper-noun candidates not already in `contacts`.
+
+    Output format: comment-prefixed lines for context, one candidate per line.
+    User redirects to a file, deletes false positives, passes via
+    --redact-names-file.
+    """
+    known = {name.lower() for name in contacts.values() if name}
+    counts: dict[str, int] = {}
+    samples: dict[str, str] = {}
+
+    for m in messages:
+        if not m.text:
+            continue
+        for match in _PROPER_NOUN_RE.finditer(m.text):
+            tok = match.group(0)
+            if tok in _SUGGEST_STOPWORDS:
+                continue
+            if tok.lower() in known:
+                continue
+            counts[tok] = counts.get(tok, 0) + 1
+            if tok not in samples:
+                start = max(0, match.start() - 60)
+                end   = min(len(m.text), match.end() + 60)
+                samples[tok] = m.text[start:end].replace("\n", " ").strip()
+
+    # Drop singletons.
+    counts = {k: v for k, v in counts.items() if v >= 2}
+
+    print("# Proper-noun candidates not in contacts.csv.")
+    print("# Review and remove false positives, then pass via --redact-names-file.")
+    print("")
+    for tok in sorted(counts, key=lambda t: (-counts[t], t)):
+        print(f"# {counts[tok]}× — {samples[tok]!r}")
+        print(tok)
+    return 0
+
+
 def classify_tapback(amt: int) -> Optional[tuple[str, bool]]:
     """Return (name, removed) or None for non-tapbacks."""
     if 2000 <= amt <= 2006:
@@ -1235,6 +1287,30 @@ def _run(args, conn) -> int:
 
     if args.list_contacts:
         return list_contacts_csv(conn, unit, Path(args.contacts) if args.contacts else None)
+
+    if args.suggest_names:
+        chat_ids = resolve_chat_ids(
+            conn,
+            chat_id=args.chat_id,
+            chat_identifier=args.chat_identifier,
+            participant=args.participant,
+        )
+        if not chat_ids:
+            print("ERROR: no matching chat found.", file=sys.stderr)
+            return 1
+        contacts = load_contacts(Path(args.contacts)) if args.contacts else {}
+        window = resolve_window(args, unit)
+        messages, _ = export(
+            conn,
+            chat_ids=chat_ids,
+            contacts=contacts,
+            me_name=args.me_name,
+            window=window,
+            limit=args.limit,
+            include_attachments=False,
+            unit=unit,
+        )
+        return suggest_names(messages, contacts)
 
     if not (args.chat_id or args.chat_identifier or args.participant):
         print("ERROR: choose --chat-id, --chat-identifier, --participant, --list, "
