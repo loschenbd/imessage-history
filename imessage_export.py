@@ -1157,6 +1157,26 @@ def build_parser() -> argparse.ArgumentParser:
                      help="Resolve attachment filenames per message")
     out.add_argument("--limit", type=int, help="Cap number of messages")
 
+    red = p.add_argument_group("redaction / pseudonymization")
+    red.add_argument("--redact", action="store_true",
+                     help="Also write a parallel set of redacted files "
+                          "(conversation_redacted.* + pseudonym_map.json).")
+    red.add_argument("--redact-only", action="store_true",
+                     help="Write ONLY the redacted set. Folder name uses the "
+                          "pseudonymized label + a stable 4-char chat-id hash.")
+    red.add_argument("--redact-names-file", default=None,
+                     help="Flat text file, one extra name per line. All "
+                          "pseudonymized into the same Person X namespace.")
+    red.add_argument("--no-redact-phones", action="store_true",
+                     help="Disable phone-number scrubbing in body text.")
+    red.add_argument("--no-redact-emails", action="store_true",
+                     help="Disable email-address scrubbing in body text.")
+    red.add_argument("--no-redact-urls", action="store_true",
+                     help="Disable URL scrubbing in body text.")
+    red.add_argument("--suggest-names", action="store_true",
+                     help="Scan the selected window for proper-noun "
+                          "candidates and print them. Skips export.")
+
     p.add_argument("--db", default=str(DEFAULT_DB),
                    help=f"Path to chat.db (default: {DEFAULT_DB})")
     return p
@@ -1169,6 +1189,8 @@ def validate_args(args):
     if args.date and (args.start_datetime or args.end_datetime):
         raise SystemExit("Use either --date+--start-time/--end-time OR "
                          "--start-datetime/--end-datetime, not both.")
+    if args.suggest_names and (args.redact or args.redact_only):
+        raise SystemExit("--suggest-names cannot be combined with --redact / --redact-only")
 
 
 def main(argv=None) -> int:

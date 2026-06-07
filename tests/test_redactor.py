@@ -324,5 +324,29 @@ class ChatLabelTests(unittest.TestCase):
         self.assertEqual(r.chat_label(), "Person B")
 
 
+class CliArgsTests(unittest.TestCase):
+    def test_flags_parse(self):
+        parser = ie.build_parser()
+        args = parser.parse_args([
+            "--chat-id", "1",
+            "--redact",
+            "--redact-names-file", "/tmp/x.txt",
+            "--no-redact-phones",
+        ])
+        self.assertTrue(args.redact)
+        self.assertFalse(args.redact_only)
+        self.assertEqual(args.redact_names_file, "/tmp/x.txt")
+        self.assertTrue(args.no_redact_phones)
+
+    def test_suggest_names_with_redact_is_rejected(self):
+        with self.assertRaises(SystemExit):
+            ie.main([
+                "--db", "/tmp/non-existent.db",
+                "--chat-id", "1",
+                "--suggest-names",
+                "--redact",
+            ])
+
+
 if __name__ == "__main__":
     unittest.main()
