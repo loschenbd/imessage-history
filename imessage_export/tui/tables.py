@@ -3,11 +3,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rich.console import Console
 from rich.table import Table
 
 from ..db import list_contacts_csv, list_recent_chats, open_db
 from ..timestamps import detect_date_unit
+from .theme import get_console
 
 
 def list_chats(args) -> int:
@@ -16,11 +16,11 @@ def list_chats(args) -> int:
     Emphasizes Participants (bold) and Last (cyan) per UX spec — those are the
     columns the user scans first when picking a chat.
     """
-    console = Console()
+    console = get_console()
     try:
         conn = open_db(Path(args.db))
     except Exception as e:
-        console.print(f"[red]ERROR:[/red] {e}")
+        console.print(f"[error]ERROR:[/error] {e}")
         return 1
     try:
         limit = getattr(args, "list_limit", 30) or 30
@@ -29,15 +29,15 @@ def list_chats(args) -> int:
         conn.close()
 
     if not chats:
-        console.print("[dim](no chats found)[/dim]")
+        console.print("[muted](no chats found)[/muted]")
         return 0
 
     table = Table(title="Recent chats", show_lines=False, header_style="bold")
-    table.add_column("ID", justify="right", style="dim")
-    table.add_column("Kind", style="dim")
+    table.add_column("ID", justify="right", style="muted")
+    table.add_column("Kind", style="muted")
     table.add_column("Participants", style="bold")  # emphasized
-    table.add_column("Msgs", justify="right", style="dim")
-    table.add_column("Last", style="cyan")  # emphasized
+    table.add_column("Msgs", justify="right", style="muted")
+    table.add_column("Last", style="bold accent")  # emphasized
 
     for c in chats:
         who = (
@@ -61,8 +61,8 @@ def list_chats(args) -> int:
 
     console.print(table)
     console.print(
-        f"  [dim]Showing {len(chats)} of {limit} "
-        f"— use --list-limit to change.[/dim]"
+        f"  [muted]Showing {len(chats)} of {limit} "
+        f"— use --list-limit to change.[/muted]"
     )
     return 0
 
@@ -74,11 +74,11 @@ def list_contacts(args) -> int:
     surface the same handle/name dump as the headless path so the user can
     still bootstrap their contacts.csv from the wizard's --list-contacts.
     """
-    console = Console()
+    console = get_console()
     try:
         conn = open_db(Path(args.db))
     except Exception as e:
-        console.print(f"[red]ERROR:[/red] {e}")
+        console.print(f"[error]ERROR:[/error] {e}")
         return 1
     try:
         unit = detect_date_unit(conn)
