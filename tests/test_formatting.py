@@ -314,6 +314,39 @@ class WriteMarkdownTests(unittest.TestCase):
         )
         self.assertIn("_── 1h later ──_", out)
 
+    def test_empty_edited_with_attachment_skips_placeholder(self):
+        m = Stub(
+            timestamp="2026-06-06 09:00:00",
+            author_label="Mallory",
+            is_from_me=0,
+            is_edited=1,
+            text="",
+            has_attachment=1,
+            attachment_filenames=["IMG_0001.HEIC"],
+        )
+        out = self._write([m])
+        # The header carries `_(edited)_`; the attachment line says what was sent.
+        # No `(edited; text not available)` body — it would be redundant.
+        self.assertNotIn("_(edited; text not available)_", out)
+        self.assertIn("_(edited)_", out)
+        self.assertIn("_Attachments: IMG_0001.HEIC_", out)
+
+    def test_empty_edited_with_unnamed_attachment_skips_placeholder(self):
+        # has_attachment=1 but attachment_filenames empty — happens when
+        # the exporter was run without --include-attachments.
+        m = Stub(
+            timestamp="2026-06-06 09:00:00",
+            author_label="Mallory",
+            is_from_me=0,
+            is_edited=1,
+            text="",
+            has_attachment=1,
+        )
+        out = self._write([m])
+        self.assertNotIn("_(edited; text not available)_", out)
+        self.assertIn("_(edited)_", out)
+        self.assertIn("_(attachment)_", out)
+
 
 if __name__ == "__main__":
     unittest.main()

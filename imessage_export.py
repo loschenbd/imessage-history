@@ -993,7 +993,8 @@ def write_markdown(path: Path, messages: list[Message], metadata: dict):
     """Notion/Obsidian-friendly markdown. Day headers (## Day, Mon D, Year),
     italic gap markers, per-message bold header with TIME-only prefix
     (the day is already in the header above), and an explicit fallback
-    when an edited message has no recoverable text."""
+    when an edited message has nothing else to anchor on (no text, no
+    attachment)."""
     parts = metadata["participants"]
     participant_list = ", ".join(
         f"{p['resolved_name']} `<{p['handle']}>`" for p in parts
@@ -1046,7 +1047,7 @@ def write_markdown(path: Path, messages: list[Message], metadata: dict):
                 f.write(f"_(app payload: `{m.app_bundle}`)_\n\n")
             elif m.text:
                 f.write(m.text.rstrip() + "\n\n")
-            elif m.is_edited:
+            elif m.is_edited and not (m.attachment_filenames or m.has_attachment):
                 f.write("_(edited; text not available)_\n\n")
             if m.attachment_filenames:
                 f.write(f"_Attachments: {', '.join(m.attachment_filenames)}_\n\n")
