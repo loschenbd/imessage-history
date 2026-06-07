@@ -234,6 +234,11 @@ def _run_wizard(args=None) -> int:
         persisted=_load_defaults().theme_override,
     )
     _theme_mod._console = make_console(palette)
+    # Also prime the stderr console singleton so error panels surfaced
+    # from the wizard path use the same palette the user resolved above.
+    _stderr = make_console(palette)
+    _stderr.file = sys.stderr
+    _theme_mod._stderr_console = _stderr
     return run_wizard()
 
 

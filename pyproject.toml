@@ -32,7 +32,7 @@ dependencies = []
 tui = [
   "rich>=13",
   "questionary>=2",
-  "textual>=0.79,<1.0",
+  "textual>=0.86,<1.0",
 ]
 
 [project.urls]
