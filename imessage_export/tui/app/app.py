@@ -27,6 +27,16 @@ class HistoryLoaded(TextualMessage):
         self.messages = messages
 
 
+class HistoryLoadFailed(TextualMessage):
+    """Fired when the history worker raised. Surfaces the error in-app
+    instead of leaving the user stranded on the "Loading…" placeholder."""
+    def __init__(self, chat_id: int, summary: str, detail: str) -> None:
+        super().__init__()
+        self.chat_id = chat_id
+        self.summary = summary
+        self.detail = detail
+
+
 class ImessageExportApp(App):
     """Default interactive surface for `imessage-export` on a TTY."""
 
@@ -163,16 +173,26 @@ class ImessageExportApp(App):
         # chat) doesn't hold the shared self.conn lock and stall the next
         # chat click. exclusive=True still discards the previous worker's
         # result via the chat_id check in on_history_loaded.
-        worker_conn = open_db(DEFAULT_DB)
         try:
-            messages = load_chat_messages(
-                worker_conn,
-                chat_id=chat_id,
-                contacts=self.state.contacts,
-                me_name=self.state.me_name,
-            )
-        finally:
-            worker_conn.close()
+            worker_conn = open_db(DEFAULT_DB)
+            try:
+                messages = load_chat_messages(
+                    worker_conn,
+                    chat_id=chat_id,
+                    contacts=self.state.contacts,
+                    me_name=self.state.me_name,
+                )
+            finally:
+                worker_conn.close()
+        except Exception as e:
+            # Without this catch, a worker exception is swallowed by
+            # Textual's @work and the user is stranded on "Loading…"
+            # forever. Surface it via HistoryLoadFailed instead.
+            import traceback
+            self.post_message(HistoryLoadFailed(
+                chat_id, f"{type(e).__name__}: {e}", traceback.format_exc()
+            ))
+            return
         self.post_message(HistoryLoaded(chat_id, messages))
 
     def on_history_loaded(self, event: HistoryLoaded) -> None:
@@ -184,6 +204,20 @@ class ImessageExportApp(App):
         self.state.history_loading = False
         history = self.query_one(HistoryView)
         history.render_messages(event.messages)
+        self._refresh_status()
+
+    def on_history_load_failed(self, event: HistoryLoadFailed) -> None:
+        # Only surface the latest failure; ignore stale workers' errors.
+        if event.chat_id != self.state.selected_chat_id:
+            return
+        self.state.history_loading = False
+        history = self.query_one(HistoryView)
+        history.show_placeholder(
+            f"Couldn't load chat {event.chat_id}: {event.summary}\n\n"
+            "Try a different chat, or restart the app."
+        )
+        # Detail goes to the Textual log (visible via `textual console`).
+        self.log.error(event.detail)
         self._refresh_status()
 
     # ------------------------------------------------------------------
