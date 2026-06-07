@@ -89,5 +89,31 @@ class TestHistoryRowFocus(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(app.state.range_start_msg_id, expected_id)
 
 
+class TestHistoryJumpBindings(unittest.IsolatedAsyncioTestCase):
+    async def test_end_focuses_last_message_home_focuses_first(self):
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        with _patched_app(tmpdir.name):
+            from imessage_export.tui.app.app import ImessageExportApp
+            from imessage_export.tui.app.widgets import HistoryView
+
+            app = ImessageExportApp()
+            async with app.run_test() as pilot:
+                await _boot_and_select_first_chat(pilot, app)
+                history = app.query_one(HistoryView)
+                rows = list(history.query(".message-row"))
+                # Focus the middle row to start somewhere non-trivial.
+                rows[len(rows) // 2].focus()
+                await pilot.pause()
+
+                history.action_jump_end()
+                await pilot.pause()
+                self.assertIs(app.focused, rows[-1])
+
+                history.action_jump_home()
+                await pilot.pause()
+                self.assertIs(app.focused, rows[0])
+
+
 if __name__ == "__main__":
     unittest.main()

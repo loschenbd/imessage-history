@@ -180,6 +180,10 @@ class HistoryView(VerticalScroll):
         ("enter", "mark_row", "Mark range endpoint"),
         ("space", "mark_row", "Mark range endpoint"),
         ("escape", "clear_marks", "Clear marks"),
+        ("home", "jump_home", "First message"),
+        ("end", "jump_end", "Last message"),
+        ("pageup", "jump_pageup", "Page up"),
+        ("pagedown", "jump_pagedown", "Page down"),
     ]
 
     def on_click(self, event) -> None:
@@ -196,6 +200,40 @@ class HistoryView(VerticalScroll):
 
     def action_clear_marks(self) -> None:
         self.post_message(self.RangeMarkRequested(msg_id=-1))  # sentinel: clear
+
+    def action_jump_home(self) -> None:
+        rows = list(self.query(".message-row"))
+        if rows:
+            rows[0].focus()
+
+    def action_jump_end(self) -> None:
+        rows = list(self.query(".message-row"))
+        if rows:
+            rows[-1].focus()
+
+    def action_jump_pageup(self) -> None:
+        rows = list(self.query(".message-row"))
+        if not rows:
+            return
+        try:
+            idx = rows.index(self.app.focused)
+        except ValueError:
+            rows[0].focus()
+            return
+        step = max(1, self.size.height - 2)
+        rows[max(0, idx - step)].focus()
+
+    def action_jump_pagedown(self) -> None:
+        rows = list(self.query(".message-row"))
+        if not rows:
+            return
+        try:
+            idx = rows.index(self.app.focused)
+        except ValueError:
+            rows[-1].focus()
+            return
+        step = max(1, self.size.height - 2)
+        rows[min(len(rows) - 1, idx + step)].focus()
 
     def apply_marks(self, start_id: int | None, end_id: int | None, messages: list[dict]) -> None:
         """Repaint range highlight CSS classes based on current marks.
