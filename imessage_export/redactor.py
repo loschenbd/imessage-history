@@ -69,6 +69,18 @@ class Redactor:
         self._alias_to_pseudonym: dict[str, str] = {}
         self._pseudonym_to_aliases: dict[str, list[str]] = {}
         self._build_pseudonym_map()
+        # Pre-compile per-alias regexes once. _redact_text runs once per
+        # message body and once per reaction target, so for a 70k-message
+        # chat with ~50 aliases this saves ~7M re.compile calls.
+        flags = 0 if self._config.case_sensitive else re.IGNORECASE
+        ordered_aliases = sorted(self._alias_to_pseudonym.keys(), key=len, reverse=True)
+        self._compiled_aliases: list[tuple[re.Pattern, str]] = [
+            (
+                re.compile(r"(?<!\w)" + re.escape(alias) + r"(?!\w)", flags),
+                self._alias_to_pseudonym[alias],
+            )
+            for alias in ordered_aliases
+        ]
 
     def _assign_pseudonym(self, alias: str, pseudonym: str) -> None:
         """Map alias → pseudonym. No-op if alias already mapped."""
@@ -141,10 +153,6 @@ class Redactor:
     _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
     _URL_RE   = re.compile(r"https?://[^\s<>\"'`]+?(?=[.,;!?)\]\}>]*(?:\s|$))")
 
-    def _ordered_aliases(self) -> list[str]:
-        """Aliases ordered longest-first so 'Alice Smith' wins over 'Alice'."""
-        return sorted(self._alias_to_pseudonym.keys(), key=len, reverse=True)
-
     def _redact_text(self, s: str) -> str:
         if not s:
             return s
@@ -158,16 +166,11 @@ class Redactor:
             out = self._EMAIL_RE.sub("[EMAIL]", out)
         if self._config.redact_urls:
             out = self._URL_RE.sub("[URL]", out)
-        case_sensitive = self._config.case_sensitive
-        for alias in self._ordered_aliases():
-            pseudonym = self._alias_to_pseudonym[alias]
-            # `(?<!\w)alias(?!\w)` matches the alias only when not adjacent to
-            # word characters. Prevents "Ben" from matching inside "Bend",
-            # "Alice" inside "Alicethe", etc. `re.escape` neutralizes any
-            # regex metacharacters in user-supplied contact names.
-            flags = 0 if case_sensitive else re.IGNORECASE
-            pattern = r"(?<!\w)" + re.escape(alias) + r"(?!\w)"
-            out = re.sub(pattern, pseudonym, out, flags=flags)
+        # Aliases are pre-compiled in __init__, sorted longest-first so
+        # "Alice Smith" wins over "Alice". The `(?<!\w)...(?!\w)` boundaries
+        # prevent "Ben" from matching inside "Bend".
+        for pattern, pseudonym in self._compiled_aliases:
+            out = pattern.sub(pseudonym, out)
         return out
 
     def redact_messages(self) -> list[Message]:

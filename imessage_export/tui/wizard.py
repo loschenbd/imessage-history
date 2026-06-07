@@ -64,14 +64,14 @@ def run() -> int:
         return 2
 
     try:
-        chat_id = _step_pick_chat(conn, defaults, contacts_for_picker)
+        chat_id, picker_row = _step_pick_chat(conn, defaults, contacts_for_picker)
         if chat_id is None:
             return 0
 
         # Pull a richer info bundle that includes msg_count + a folder-label
-        # for the confirm panel. list_recent_chats already aggregates msg_count
-        # so we re-use that row when we can find it.
-        info = _enriched_chat_info(conn, chat_id)
+        # for the confirm panel. Re-use the picker's already-aggregated row
+        # instead of re-scanning every chat.
+        info = _enriched_chat_info(conn, chat_id, picker_row)
 
         window = _step_pick_window(info)
         if window is None:
@@ -106,8 +106,10 @@ def run() -> int:
     )
     conn = open_db(Path(args.db))
     try:
-        with console.status("[bold cyan]Exporting…[/bold cyan]", spinner="dots"):
-            rc = _run(args, conn)
+        # cli._run prints per-phase progress lines (load / redact / per-file
+        # writer ticks) so the user can see big exports moving. Wrapping that
+        # in console.status would hide the ticks behind a spinner.
+        rc = _run(args, conn)
     finally:
         conn.close()
 
@@ -194,27 +196,36 @@ def _load_contacts_for_picker(defaults) -> dict:
         return {}
 
 
-def _step_pick_chat(conn, defaults: Defaults, contacts: dict) -> Optional[int]:
-    """Type-to-filter chat picker. No pre-highlighted default."""
+def _step_pick_chat(conn, defaults: Defaults, contacts: dict) -> tuple[Optional[int], Optional[dict]]:
+    """Type-to-filter chat picker. No pre-highlighted default.
+
+    Returns (chat_id, picker_row). The row is the already-aggregated record
+    the picker saw, so the caller can build the confirm panel without a
+    second full scan of `chat`+`message`.
+    """
     _step_banner(1, "Pick a chat")
     # Fetch every chat so the user can type-to-filter across the full
     # history, not just the most recent few hundred.
     rows = list_recent_chats(conn, None)
     if not rows:
         console.print("[red]No chats found in chat.db.[/red]")
-        return None
+        return None, None
 
     choices = [
         questionary.Choice(_format_chat_row(r, contacts), value=r["chat_id"])
         for r in rows
     ]
 
-    return questionary.select(
+    chat_id = questionary.select(
         "Which chat? (type to filter)",
         choices=choices,
         use_search_filter=True,
         use_jk_keys=False,
     ).ask()
+    if chat_id is None:
+        return None, None
+    row = next((r for r in rows if r.get("chat_id") == chat_id), None)
+    return chat_id, row
 
 
 def _format_chat_row(r: dict, contacts: dict) -> str:
@@ -483,12 +494,13 @@ def _step_confirm(info: dict, window, contacts, output_dir, me_name, redact_choi
 # ──────────────────────────────────────────────────────────────────────────
 
 
-def _enriched_chat_info(conn, chat_id: int) -> dict:
-    """Combine chat_info() with the matching list_recent_chats() row.
+def _enriched_chat_info(conn, chat_id: int, picker_row: Optional[dict] = None) -> dict:
+    """Combine chat_info() with the picker's already-aggregated row.
 
     `chat_info()` returns display_name/style/chat_identifier/is_group but no
-    msg_count or last-seen. We scan all chats so the confirm panel can show
-    "(N msgs)" regardless of how far back the picked chat is.
+    msg_count or last-seen. `picker_row` (when provided) carries the
+    pre-aggregated msg_count + participants the picker already computed, so
+    we avoid scanning the full `chat`+`message` join a second time.
     """
     base = dict(chat_info(conn, chat_id))
     base["chat_id"] = chat_id
@@ -496,16 +508,16 @@ def _enriched_chat_info(conn, chat_id: int) -> dict:
         base.get("display_name") or base.get("chat_identifier") or f"chat {chat_id}"
     )
     base["msg_count"] = 0
-    for r in list_recent_chats(conn, None):
-        if r.get("chat_id") == chat_id:
-            base["msg_count"] = r.get("msg_count", 0)
-            base["participants"] = r.get("participants", "")
-            label_from_row = (
-                r.get("display_name") or r.get("participants") or r.get("chat_identifier")
-            )
-            if label_from_row:
-                base["label"] = label_from_row
-            break
+    if picker_row:
+        base["msg_count"] = picker_row.get("msg_count", 0)
+        base["participants"] = picker_row.get("participants", "")
+        label_from_row = (
+            picker_row.get("display_name")
+            or picker_row.get("participants")
+            or picker_row.get("chat_identifier")
+        )
+        if label_from_row:
+            base["label"] = label_from_row
     return base
 
 
