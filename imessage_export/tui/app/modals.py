@@ -9,6 +9,7 @@ from datetime import date
 from pathlib import Path
 from typing import Optional
 
+from textual import work
 from textual.app import ComposeResult
 from textual.containers import Center, Horizontal, Vertical
 from textual.screen import ModalScreen
@@ -302,19 +303,27 @@ class ContactsScanModal(ModalScreen[Optional[Path]]):
             self.dismiss(None)
             return
         target = Path.cwd() / "contacts.csv"
+        self._run_scan_worker(target)
+
+    @work(thread=True)
+    def _run_scan_worker(self, target: Path) -> None:
         from ...contacts_macos import fetch_contacts, write_csv
         try:
             rows = fetch_contacts()
         except RuntimeError as exc:
-            self.app.notify(f"Could not read Contacts: {exc}", severity="warning")
-            self.dismiss(None)
+            self.app.call_from_thread(
+                self.app.notify, f"Could not read Contacts: {exc}", severity="warning"
+            )
+            self.app.call_from_thread(self.dismiss, None)
             return
         if not rows:
-            self.app.notify("No contacts found in Contacts.app.", severity="warning")
-            self.dismiss(None)
+            self.app.call_from_thread(
+                self.app.notify, "No contacts found in Contacts.app.", severity="warning"
+            )
+            self.app.call_from_thread(self.dismiss, None)
             return
         write_csv(rows, target)
-        self.dismiss(target)
+        self.app.call_from_thread(self.dismiss, target)
 
 
 class HelpModal(ModalScreen[None]):

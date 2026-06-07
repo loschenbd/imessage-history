@@ -81,7 +81,7 @@ class ImessageExportApp(App):
 
         try:
             self.conn = open_db(DEFAULT_DB)
-        except Exception as exc:
+        except BaseException as exc:
             from .modals import ErrorModal
             self.push_screen(ErrorModal(
                 title="Cannot read chat.db",
@@ -153,6 +153,7 @@ class ImessageExportApp(App):
         history.show_loading()
         self._load_history_worker(event.chat_id)
         self._refresh_status()
+        self._persist_defaults()
 
     @work(thread=True, exclusive=True)
     def _load_history_worker(self, chat_id: int) -> None:
@@ -369,7 +370,8 @@ class ImessageExportApp(App):
             rc = _run(ns, self.conn)
             if rc == 0:
                 n = self._count_messages_in_window(window)
-                reset_after_export(self.state, success_tag=f"✓ Exported {n} msgs → {self.state.output_dir}")
+                success_tag = f"✓ Exported {n} msgs → {self.state.output_dir}"
+                self.call_from_thread(reset_after_export, self.state, success_tag=success_tag)
         except Exception as exc:
             import traceback
             tb = traceback.format_exc()
