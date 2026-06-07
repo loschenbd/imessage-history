@@ -49,9 +49,13 @@ def column_exists(conn, table: str, col: str) -> bool:
     return any(r["name"] == col for r in rows)
 
 
-def list_recent_chats(conn, limit: int = 30):
+def list_recent_chats(conn, limit: Optional[int] = 30):
+    """Recent chats ordered by last message date.
+
+    `limit=None` returns every chat (for full-history pickers like the wizard).
+    """
     unit = detect_date_unit(conn)
-    sql = """
+    base_sql = """
       SELECT c.ROWID                 AS chat_id,
              c.guid                  AS chat_guid,
              c.chat_identifier       AS chat_identifier,
@@ -67,10 +71,13 @@ def list_recent_chats(conn, limit: int = 30):
         LEFT JOIN handle h             ON h.ROWID    = chj.handle_id
        GROUP BY c.ROWID
        ORDER BY last_date DESC
-       LIMIT ?
     """
+    if limit is None:
+        cursor = conn.execute(base_sql)
+    else:
+        cursor = conn.execute(base_sql + " LIMIT ?", (limit,))
     out = []
-    for r in conn.execute(sql, (limit,)).fetchall():
+    for r in cursor.fetchall():
         last = apple_to_utc_datetime(r["last_date"], unit) if r["last_date"] else None
         out.append({
             "chat_id": r["chat_id"],
