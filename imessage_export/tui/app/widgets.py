@@ -161,3 +161,59 @@ class HistoryView(VerticalScroll):
         text.append(f"{speaker}: ", style="bold")
         text.append(body)
         return text
+
+    # ------------------------------------------------------------------
+    # Task 7: Range marks
+    # ------------------------------------------------------------------
+
+    class RangeMarkRequested(TextualMessage):
+        """User clicked or Enter'd a message row — mark it as a range endpoint."""
+        def __init__(self, msg_id: int) -> None:
+            super().__init__()
+            self.msg_id = msg_id
+
+    BINDINGS = [
+        ("enter", "mark_row", "Mark range endpoint"),
+        ("space", "mark_row", "Mark range endpoint"),
+        ("escape", "clear_marks", "Clear marks"),
+    ]
+
+    def on_click(self, event) -> None:
+        target = event.widget
+        msg_id = getattr(target, "data_msg_id", None)
+        if msg_id is not None:
+            self.post_message(self.RangeMarkRequested(msg_id))
+
+    def action_mark_row(self) -> None:
+        focused = self.app.focused
+        msg_id = getattr(focused, "data_msg_id", None)
+        if msg_id is not None:
+            self.post_message(self.RangeMarkRequested(msg_id))
+
+    def action_clear_marks(self) -> None:
+        self.post_message(self.RangeMarkRequested(msg_id=-1))  # sentinel: clear
+
+    def apply_marks(self, start_id: int | None, end_id: int | None, messages: list[dict]) -> None:
+        """Repaint range highlight CSS classes based on current marks.
+
+        `messages` is the same `selected_chat_messages` list (each {msg_id, timestamp})
+        so the in-range span is contiguous in render order.
+        """
+        if start_id is None and end_id is None:
+            for row in self.query(".message-row"):
+                row.remove_class("is-in-range")
+                row.remove_class("is-selected-endpoint")
+            return
+
+        ids_in_order = [m["message_id"] for m in messages]
+        endpoints = {start_id, end_id} - {None}
+        if start_id and end_id:
+            lo, hi = sorted([ids_in_order.index(start_id), ids_in_order.index(end_id)])
+            in_range_ids = set(ids_in_order[lo:hi+1])
+        else:
+            in_range_ids = endpoints
+
+        for row in self.query(".message-row"):
+            msg_id = getattr(row, "data_msg_id", None)
+            row.set_class(msg_id in endpoints, "is-selected-endpoint")
+            row.set_class(msg_id in in_range_ids and msg_id not in endpoints, "is-in-range")

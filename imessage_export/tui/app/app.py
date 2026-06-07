@@ -108,3 +108,41 @@ class ImessageExportApp(App):
         self.state.history_loading = False
         history = self.query_one(HistoryView)
         history.render_messages(event.messages)
+
+    # ------------------------------------------------------------------
+    # Task 7: Range marks
+    # ------------------------------------------------------------------
+
+    def on_history_view_range_mark_requested(self, event: HistoryView.RangeMarkRequested) -> None:
+        if event.msg_id == -1:
+            # Sentinel: clear all marks (Esc).
+            self.state.range_start_msg_id = None
+            self.state.range_end_msg_id = None
+            if self.state.typed_window:
+                self.state.window_source = "typed"
+            else:
+                self.state.window_source = "all"
+        else:
+            self._mark_message(event.msg_id)
+        self._repaint_marks()
+
+    def _mark_message(self, msg_id: int) -> None:
+        s = self.state
+        if s.range_start_msg_id is None:
+            s.range_start_msg_id = msg_id
+        elif s.range_end_msg_id is None and msg_id != s.range_start_msg_id:
+            s.range_end_msg_id = msg_id
+        else:
+            # Third click / re-click: clear and start over.
+            s.range_start_msg_id = msg_id
+            s.range_end_msg_id = None
+        s.window_source = "selection"
+        s.last_export_status = None
+
+    def _repaint_marks(self) -> None:
+        history = self.query_one(HistoryView)
+        history.apply_marks(
+            self.state.range_start_msg_id,
+            self.state.range_end_msg_id,
+            self.state.selected_chat_messages,
+        )
