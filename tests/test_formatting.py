@@ -131,5 +131,87 @@ class FormatMessageBodyEditedEmptyTests(unittest.TestCase):
         self.assertEqual(format_message_body(m), "")
 
 
+from pathlib import Path
+import tempfile
+
+from imessage_export import render_txt_message, write_txt
+
+
+class RenderTxtMessageTests(unittest.TestCase):
+    def test_single_line_full_time(self):
+        m = Stub(timestamp="2026-06-06 09:00:08", author_label="Ben", text="hi")
+        self.assertEqual(
+            render_txt_message(m, time_format="full"),
+            "[2026-06-06 09:00:08] Ben: hi",
+        )
+
+    def test_single_line_time_only(self):
+        m = Stub(timestamp="2026-06-06 09:00:08", author_label="Ben", text="hi")
+        self.assertEqual(
+            render_txt_message(m, time_format="time"),
+            "[09:00:08] Ben: hi",
+        )
+
+    def test_multi_paragraph_indents_continuation(self):
+        m = Stub(
+            timestamp="2026-06-06 09:00:08",
+            author_label="Mallory",
+            text="Para one.\n\nPara two.\n\nPara three.",
+        )
+        out = render_txt_message(m, time_format="time")
+        self.assertEqual(
+            out,
+            "[09:00:08] Mallory: Para one.\n"
+            "\n"
+            "    Para two.\n"
+            "\n"
+            "    Para three.",
+        )
+
+
+class WriteTxtTests(unittest.TestCase):
+    def _write(self, messages) -> str:
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "out.txt"
+            write_txt(p, messages)
+            return p.read_text()
+
+    def test_single_message_day_header_present(self):
+        m = Stub(timestamp="2026-06-06 09:00:08", text="hi")
+        out = self._write([m])
+        self.assertIn("── Saturday, June 6, 2026 ──", out)
+        self.assertIn("[09:00:08] Ben: hi", out)
+
+    def test_gap_marker_inserted_mid_day(self):
+        m1 = Stub(timestamp="2026-06-06 09:00:00", text="hi")
+        m2 = Stub(timestamp="2026-06-06 10:00:00", text="back")
+        out = self._write([m1, m2])
+        self.assertIn("── 1h later ──", out)
+
+    def test_no_gap_when_close_together(self):
+        m1 = Stub(timestamp="2026-06-06 09:00:00", text="hi")
+        m2 = Stub(timestamp="2026-06-06 09:05:00", text="back")
+        out = self._write([m1, m2])
+        self.assertNotIn("later ──", out)
+
+    def test_day_change_emits_second_day_header_no_gap(self):
+        m1 = Stub(timestamp="2026-06-06 23:55:00", text="night")
+        m2 = Stub(timestamp="2026-06-07 00:05:00", text="morning")
+        out = self._write([m1, m2])
+        self.assertIn("── Saturday, June 6, 2026 ──", out)
+        self.assertIn("── Sunday, June 7, 2026 ──", out)
+        self.assertNotIn("later ──", out)
+
+    def test_indented_continuation_in_output(self):
+        m = Stub(
+            timestamp="2026-06-06 09:00:00",
+            author_label="Mallory",
+            text="One.\n\nTwo.",
+        )
+        out = self._write([m])
+        self.assertIn("[09:00:00] Mallory: One.", out)
+        self.assertIn("    Two.", out)
+
+
 if __name__ == "__main__":
     unittest.main()

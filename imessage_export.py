@@ -887,15 +887,51 @@ def format_message_body(m: Message) -> str:
     return " ".join(parts).strip()
 
 
-def format_txt_line(m: Message) -> str:
+def render_txt_message(m: "Message", *, time_format: str = "full",
+                       indent: str = "    ") -> str:
+    """Render one message as one or more plain-text lines.
+
+    time_format:
+      'full' → '[YYYY-MM-DD HH:MM:SS] Author: body'
+      'time' → '[HH:MM:SS] Author: body'
+
+    Multi-paragraph bodies leave the first line on the speaker line and
+    indent each subsequent non-blank paragraph by `indent`. Blank lines
+    between paragraphs stay literally blank for visual separation.
+    """
+    if time_format == "time" and " " in m.timestamp:
+        time_part = m.timestamp.split(" ", 1)[1]
+    else:
+        time_part = m.timestamp
+    prefix = f"[{time_part}] {m.author_label}: "
     body = format_message_body(m)
-    return f"[{m.timestamp}] {m.author_label}: {body}".rstrip()
+    if "\n" not in body:
+        return (prefix + body).rstrip()
+    first, *rest = body.split("\n")
+    lines = [(prefix + first).rstrip()]
+    for line in rest:
+        lines.append((indent + line) if line.strip() else "")
+    return "\n".join(lines).rstrip()
 
 
-def write_txt(path: Path, messages: list[Message]):
+def write_txt(path: Path, messages: list["Message"]):
+    """Plain-text export with day headers, gap markers, and time-only line
+    prefixes. The full date for each line is carried by the day header
+    above it."""
     with path.open("w") as f:
-        for m in messages:
-            f.write(format_txt_line(m) + "\n")
+        first = True
+        for event in iter_render_events(messages):
+            kind = event[0]
+            if kind == "day":
+                if not first:
+                    f.write("\n")
+                f.write(f"── {format_day_label(event[1])} ──\n\n")
+                first = False
+            elif kind == "gap":
+                f.write(f"\n── {format_gap(event[1])} ──\n\n")
+            else:
+                f.write(render_txt_message(event[1], time_format="time") + "\n")
+                first = False
 
 
 def write_ai_ready(path: Path, messages: list[Message], metadata: dict):
