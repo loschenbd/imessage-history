@@ -990,6 +990,10 @@ def write_ai_ready(path: Path, messages: list["Message"], metadata: dict):
 
 
 def write_markdown(path: Path, messages: list[Message], metadata: dict):
+    """Notion/Obsidian-friendly markdown. Day headers (## Day, Mon D, Year),
+    italic gap markers, per-message bold header with TIME-only prefix
+    (the day is already in the header above), and an explicit fallback
+    when an edited message has no recoverable text."""
     parts = metadata["participants"]
     participant_list = ", ".join(
         f"{p['resolved_name']} `<{p['handle']}>`" for p in parts
@@ -1012,8 +1016,17 @@ def write_markdown(path: Path, messages: list[Message], metadata: dict):
     ]
     with path.open("w") as f:
         f.write("\n".join(lines))
-        for m in messages:
-            f.write(f"**{m.timestamp} · {m.author_label}**")
+        for event in iter_render_events(messages):
+            kind = event[0]
+            if kind == "day":
+                f.write(f"\n## {format_day_label(event[1])}\n\n")
+                continue
+            if kind == "gap":
+                f.write(f"_── {format_gap(event[1])} ──_\n\n")
+                continue
+            m = event[1]
+            time_str = m.timestamp.split(" ", 1)[1] if " " in m.timestamp else m.timestamp
+            f.write(f"**{time_str} · {m.author_label}**")
             if m.is_edited and m.kind == "message":
                 f.write(" _(edited)_")
             f.write("\n\n")
@@ -1033,6 +1046,8 @@ def write_markdown(path: Path, messages: list[Message], metadata: dict):
                 f.write(f"_(app payload: `{m.app_bundle}`)_\n\n")
             elif m.text:
                 f.write(m.text.rstrip() + "\n\n")
+            elif m.is_edited:
+                f.write("_(edited; text not available)_\n\n")
             if m.attachment_filenames:
                 f.write(f"_Attachments: {', '.join(m.attachment_filenames)}_\n\n")
             elif m.has_attachment and not m.text and m.kind == "message":

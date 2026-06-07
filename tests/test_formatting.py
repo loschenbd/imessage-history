@@ -261,5 +261,59 @@ class WriteAiReadyTests(unittest.TestCase):
         self.assertIn("── 1h later ──", out)
 
 
+from imessage_export import write_markdown
+
+
+class WriteMarkdownTests(unittest.TestCase):
+    META = {
+        "participants": [{"resolved_name": "Mallory", "handle": "+14026608922"}],
+        "me_name": "Ben",
+        "message_count": 1,
+        "actual_first_local": "2026-06-06 09:00:00",
+        "actual_last_local": "2026-06-06 09:00:00",
+        "window": {
+            "local_start": "2026-06-06 08:30:00",
+            "local_end": "2026-06-06 16:00:00",
+            "utc_start": "2026-06-06T15:30:00+00:00",
+            "utc_end": "2026-06-06T23:00:00+00:00",
+            "tz": "PDT",
+        },
+        "chats": [{"display_name": "", "style": 0, "chat_identifier": "+14026608922", "is_group": False}],
+    }
+
+    def _write(self, messages, meta=None) -> str:
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "out.md"
+            write_markdown(p, messages, meta or self.META)
+            return p.read_text()
+
+    def test_day_header_uses_h2(self):
+        m = Stub(timestamp="2026-06-06 09:00:00", text="hi")
+        out = self._write([m])
+        self.assertIn("## Saturday, June 6, 2026", out)
+
+    def test_per_message_header_drops_date(self):
+        m = Stub(timestamp="2026-06-06 09:00:00", author_label="Ben", text="hi")
+        out = self._write([m])
+        self.assertIn("**09:00:00 · Ben**", out)
+        self.assertNotIn("**2026-06-06 09:00:00 · Ben**", out)
+
+    def test_empty_edited_renders_placeholder(self):
+        m = Stub(timestamp="2026-06-06 09:00:00", author_label="Mallory",
+                 is_from_me=0, is_edited=1, text="")
+        out = self._write([m])
+        self.assertIn("_(edited; text not available)_", out)
+
+    def test_gap_marker_renders_as_italic(self):
+        m1 = Stub(timestamp="2026-06-06 09:00:00", text="hi")
+        m2 = Stub(timestamp="2026-06-06 10:00:00", text="back")
+        out = self._write(
+            [m1, m2],
+            meta={**self.META, "message_count": 2,
+                  "actual_last_local": "2026-06-06 10:00:00"},
+        )
+        self.assertIn("_── 1h later ──_", out)
+
+
 if __name__ == "__main__":
     unittest.main()
