@@ -65,30 +65,20 @@ Prefer the linear wizard from Phase 1? Run `imessage-export --wizard`.
 
 ## Theming
 
-The TUI ships with two palettes from
-[EdenEast/nightfox.nvim](https://github.com/EdenEast/nightfox.nvim):
+The interactive app and the Rich/Questionary wizard share a two-palette colour scheme inspired by EdenEast/nightfox.nvim:
 
-- **dawnfox** — warm light theme
-- **terafox** — earthy dark theme
+- **dawnfox** — warm light palette
+- **terafox** — earthy dark teal palette
 
-By default the active palette follows your macOS appearance
-(`System Settings → Appearance`). To override:
+The theme auto-detects from your macOS Appearance setting (System Settings → Appearance → Light/Dark). To override:
 
-```bash
-# One-shot CLI flag (highest precedence)
-imessage-export --theme dawnfox
-imessage-export --theme terafox
-imessage-export --theme auto   # ignore persisted preference for this run
+- **One-shot flag:** `imessage-export tui --theme dawnfox` (or `terafox`, or `auto`)
+- **Env var:** `IMESSAGE_EXPORT_THEME=dawnfox imessage-export tui`
+- **Persisted:** open Settings inside the app (`s`), pick Theme → Dawnfox / Terafox / Auto-detect, save.
 
-# Env var (next-highest)
-IMESSAGE_EXPORT_THEME=terafox imessage-export
-```
+Persisted choice lives in `~/.config/imessage-export/defaults.json` under `theme_override` (`"dawnfox"`, `"terafox"`, or absent for auto).
 
-Or open the Textual app's Settings modal (press `s`) to pick a theme
-and persist it to `~/.config/imessage-export/recent.json`.
-
-Auto-detect only runs on macOS. On other platforms the TUI falls back
-to terafox unless one of the overrides above is set.
+Auto-detect uses `defaults read -g AppleInterfaceStyle` on macOS only; on other platforms (or when the read fails) the app falls back to terafox.
 
 ## Privacy & scope
 

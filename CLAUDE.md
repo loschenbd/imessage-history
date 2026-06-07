@@ -77,12 +77,7 @@ Output lands in `exports/<contact-or-group>/<YYYY-MM-DD>/` with:
   ready-to-render objects. When adding a new writer, you don't need to
   handle redaction at all; just make sure it consumes the standard
   `Message` / `metadata` shapes.
-- TUI color decisions live in `imessage_export/tui/theme.py`. Never
-  hardcode color names (`red`, `cyan`, `green`, `yellow`) or hex codes
-  in `wizard.py`, `tables.py`, `errors.py`, or the Textual app's CSS.
-  Use semantic styles (`accent`, `success`, `warning`, `error`,
-  `muted`, `day_header`) or Textual theme tokens (`$primary`,
-  `$success`, `$day-header`, …).
+- **No hardcoded colors in `tui/`.** All UI styling routes through `tui/theme.py` semantic roles (`accent`, `success`, `warning`, `error`, `muted`, `day_header`) or palette hex pulled via `PALETTES[self.app.theme]`. Don't reintroduce `"cyan"`, `"green"`, `"red"`, `[red]`, `border_style="green"`, etc.
 
 ## Schema gotchas to remember
 
