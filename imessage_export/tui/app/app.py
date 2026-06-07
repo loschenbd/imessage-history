@@ -45,6 +45,7 @@ class ImessageExportApp(App):
     BINDINGS = [
         ("w", "open_window_modal", "Window"),
         ("s", "open_settings_modal", "Settings"),
+        ("r", "open_redact_modal", "Redact"),
     ]
 
     def __init__(self) -> None:
@@ -208,3 +209,14 @@ class ImessageExportApp(App):
             me_name=self.state.me_name,
             last_chat_id=self.state.selected_chat_id,
         ))
+
+    # ------------------------------------------------------------------
+    # Task 10: RedactModal
+    # ------------------------------------------------------------------
+
+    async def action_open_redact_modal(self) -> None:
+        from .modals import RedactModal
+        result = await self.push_screen_wait(RedactModal(current=self.state.redact))
+        if result is None:
+            return
+        self.state.redact = result

@@ -154,3 +154,71 @@ class SettingsModal(ModalScreen[Optional[dict]]):
             "output_dir":    self.query_one("#output-dir", Input).value.strip() or "./exports",
             "me_name":       self.query_one("#me-name", Input).value.strip() or "Me",
         })
+
+
+class RedactModal(ModalScreen[Optional[dict]]):
+    """Configure redaction for the next export. Dismisses with the choices dict or None."""
+
+    DEFAULT_CSS = """
+    RedactModal {
+        align: center middle;
+    }
+    RedactModal > Vertical {
+        width: 60;
+        padding: 1 2;
+        border: thick $primary;
+        background: $surface;
+    }
+    """
+
+    BINDINGS = [("escape", "dismiss_none", "Cancel")]
+
+    def __init__(self, *, current: dict) -> None:
+        super().__init__()
+        self._current = current or {}
+
+    def compose(self) -> ComposeResult:
+        c = self._current
+        with Vertical():
+            yield Static("Redact", classes="modal-title")
+            yield RadioSet(
+                RadioButton("Off", value=not (c.get("redact") or c.get("redact_only")), id="r-off"),
+                RadioButton("Keep both versions", value=bool(c.get("redact")), id="r-both"),
+                RadioButton("Redacted only", value=bool(c.get("redact_only")), id="r-only"),
+                id="redact-mode",
+            )
+            with Horizontal():
+                yield Label("Extra names file:")
+                yield Input(value=c.get("redact_names_file") or "", id="names-file")
+            yield Static("Scrub from message bodies:")
+            yield Checkbox("Phones", value=not c.get("no_redact_phones", False), id="cb-phones")
+            yield Checkbox("Emails", value=not c.get("no_redact_emails", False), id="cb-emails")
+            yield Checkbox("URLs",   value=not c.get("no_redact_urls",   False), id="cb-urls")
+            with Horizontal():
+                yield Button("Cancel", id="cancel")
+                yield Button("Save", id="save", variant="primary")
+
+    def action_dismiss_none(self) -> None:
+        self.dismiss(None)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cancel":
+            self.dismiss(None)
+            return
+
+        mode_pressed = self.query_one("#redact-mode", RadioSet).pressed_button
+        mode_id = mode_pressed.id if mode_pressed else "r-off"
+
+        if mode_id == "r-off":
+            self.dismiss({})
+            return
+
+        names = self.query_one("#names-file", Input).value.strip() or None
+        self.dismiss({
+            "redact":      mode_id == "r-both",
+            "redact_only": mode_id == "r-only",
+            "redact_names_file": names,
+            "no_redact_phones": not self.query_one("#cb-phones", Checkbox).value,
+            "no_redact_emails": not self.query_one("#cb-emails", Checkbox).value,
+            "no_redact_urls":   not self.query_one("#cb-urls",   Checkbox).value,
+        })
