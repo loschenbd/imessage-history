@@ -17,7 +17,7 @@ from ...cli import DEFAULT_DB
 from ...db import list_recent_chats, open_db
 from ..defaults import Defaults, load as load_defaults
 from .state import AppState
-from .widgets import HistoryView, Sidebar
+from .widgets import HistoryView, Sidebar, StatusLine
 
 
 class HistoryLoaded(TextualMessage):
@@ -47,6 +47,10 @@ class ImessageExportApp(App):
         ("s", "open_settings_modal", "Settings"),
         ("r", "open_redact_modal", "Redact"),
         ("e", "export", "Export"),
+        ("z", "relaunch_wizard", "Wizard"),
+        ("h", "help", "Help"),
+        ("q", "quit", "Quit"),
+        ("question_mark", "help", "Help"),
     ]
 
     def __init__(self) -> None:
@@ -56,11 +60,14 @@ class ImessageExportApp(App):
         self._defaults: Defaults | None = None
 
     def compose(self) -> ComposeResult:
+        from .widgets import ActionBar, StatusLine
         yield Horizontal(
             Sidebar(chats=[], contacts={}, id="sidebar"),
             HistoryView(id="history"),
             id="main",
         )
+        yield StatusLine(id="status")
+        yield ActionBar(id="action-bar")
 
     def on_mount(self) -> None:
         self._defaults = load_defaults()
@@ -121,6 +128,7 @@ class ImessageExportApp(App):
         history = self.query_one(HistoryView)
         history.show_loading()
         self._load_history_worker(event.chat_id)
+        self._refresh_status()
 
     @work(thread=True, exclusive=True)
     def _load_history_worker(self, chat_id: int) -> None:
@@ -142,6 +150,7 @@ class ImessageExportApp(App):
         self.state.history_loading = False
         history = self.query_one(HistoryView)
         history.render_messages(event.messages)
+        self._refresh_status()
 
     # ------------------------------------------------------------------
     # Task 7: Range marks
@@ -156,6 +165,7 @@ class ImessageExportApp(App):
                 self.state.window_source = "typed"
             else:
                 self.state.window_source = "all"
+            self._refresh_status()
         else:
             self._mark_message(event.msg_id)
         self._repaint_marks()
@@ -172,6 +182,7 @@ class ImessageExportApp(App):
             s.range_end_msg_id = None
         s.window_source = "selection"
         s.last_export_status = None
+        self._refresh_status()
 
     def _repaint_marks(self) -> None:
         history = self.query_one(HistoryView)
@@ -193,6 +204,7 @@ class ImessageExportApp(App):
         self.state.typed_window = result
         self.state.window_source = "typed"
         self.state.last_export_status = None
+        self._refresh_status()
 
     # ------------------------------------------------------------------
     # Task 9: SettingsModal
@@ -228,6 +240,7 @@ class ImessageExportApp(App):
         self.state.output_dir = Path(result["output_dir"]).expanduser()
         self.state.me_name = result["me_name"]
         self._persist_defaults()
+        self._refresh_status()
 
     def _persist_defaults(self) -> None:
         from ..defaults import Defaults, save as save_defaults
@@ -248,6 +261,7 @@ class ImessageExportApp(App):
         if result is None:
             return
         self.state.redact = result
+        self._refresh_status()
 
     # ------------------------------------------------------------------
     # Task 11: ExportConfirmModal + export worker
@@ -336,3 +350,41 @@ class ImessageExportApp(App):
     def _post_export_refresh(self) -> None:
         # Repaint marks (now cleared) and let the future status-line widget refresh.
         self._repaint_marks()
+        self._refresh_status()
+
+    # ------------------------------------------------------------------
+    # Task 13: ActionBar routing + accelerators + HelpModal
+    # ------------------------------------------------------------------
+
+    def on_button_pressed(self, event) -> None:
+        bid = event.button.id
+        if bid == "btn-window":     self.run_action("open_window_modal")
+        elif bid == "btn-settings": self.run_action("open_settings_modal")
+        elif bid == "btn-redact":   self.run_action("open_redact_modal")
+        elif bid == "btn-export":   self.run_action("export")
+        elif bid == "btn-wizard":   self.action_relaunch_wizard()
+        elif bid == "btn-help":     self.action_help()
+        elif bid == "btn-quit":     self.exit(0)
+
+    def action_relaunch_wizard(self) -> None:
+        """Quit the app and re-launch as `imessage-export --wizard`."""
+        import os, sys
+        self.exit(0)
+        os.execvp(sys.argv[0], [sys.argv[0], "--wizard"])
+
+    def action_help(self) -> None:
+        from .modals import HelpModal
+        self.push_screen(HelpModal())
+
+    def on_key(self, event) -> None:
+        # When an Input has focus, never let single-letter accelerators fire.
+        if self.focused and getattr(self.focused, "__class__", type(None)).__name__ == "Input":
+            if event.character and event.character.isalpha() and not event.is_printable_control:
+                # Let the input keep the keystroke; don't run BINDINGS.
+                return
+
+    def _refresh_status(self) -> None:
+        try:
+            self.query_one("#status", StatusLine).update_from_state(self.state)
+        except Exception:
+            pass  # status widget not mounted yet during early mount steps

@@ -9,7 +9,7 @@ from typing import Iterable
 
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message as TextualMessage
 from textual.widget import Widget
 from textual.widgets import Input, ListItem, ListView, Label, Static
@@ -217,3 +217,73 @@ class HistoryView(VerticalScroll):
             msg_id = getattr(row, "data_msg_id", None)
             row.set_class(msg_id in endpoints, "is-selected-endpoint")
             row.set_class(msg_id in in_range_ids and msg_id not in endpoints, "is-in-range")
+
+
+# ---------------------------------------------------------------------------
+# Task 13: StatusLine + ActionBar
+# ---------------------------------------------------------------------------
+
+from textual.widgets import Button as TextualButton
+
+
+class StatusLine(Static):
+    """One-line summary of resolved state."""
+
+    DEFAULT_CSS = """
+    StatusLine {
+        height: 1;
+        padding: 0 2;
+        color: $text-muted;
+    }
+    """
+
+    def update_from_state(self, state) -> None:
+        if state.last_export_status:
+            self.update(state.last_export_status)
+            return
+        from .state import resolved_window
+        w = resolved_window(state)
+        if w["mode"] == "day":
+            bits = [w["date"]]
+            if w.get("start_time") or w.get("end_time"):
+                bits.append(f"{w.get('start_time') or '00:00'}–{w.get('end_time') or '23:59'}")
+            window_str = " ".join(bits)
+        elif w["mode"] == "range":
+            window_str = f"{w['from_date']}..{w['to_date']}"
+        else:
+            window_str = "everything"
+
+        source = {
+            "selection": "from selection",
+            "typed":     "from Window modal",
+            "all":       "everything",
+        }[state.window_source]
+        contacts_str = f"contacts: {state.contacts_path.name}" if state.contacts_path else "contacts: none"
+        redact_str = "redact: on" if state.redact else "redact: off"
+        self.update(
+            f"window: {window_str} ({source}) · output: {state.output_dir} · {contacts_str} · {redact_str}"
+        )
+
+
+class ActionBar(Horizontal):
+    """Row of visible buttons. Each button's first letter is the accelerator."""
+
+    DEFAULT_CSS = """
+    ActionBar {
+        height: 3;
+        padding: 0 1;
+        border-top: solid $accent;
+    }
+    ActionBar > Button {
+        margin: 0 1;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield TextualButton("[u]W[/u]indow…",   id="btn-window")
+        yield TextualButton("[u]S[/u]ettings…", id="btn-settings")
+        yield TextualButton("[u]R[/u]edact…",   id="btn-redact")
+        yield TextualButton("[u]E[/u]xport",    id="btn-export", variant="primary")
+        yield TextualButton("Wi[u]z[/u]ard",    id="btn-wizard")
+        yield TextualButton("[u]H[/u]elp",      id="btn-help")
+        yield TextualButton("[u]Q[/u]uit",      id="btn-quit")

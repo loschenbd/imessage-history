@@ -315,3 +315,40 @@ class ContactsScanModal(ModalScreen[Optional[Path]]):
             return
         write_csv(rows, target)
         self.dismiss(target)
+
+
+class HelpModal(ModalScreen[None]):
+    """Display the binding cheatsheet."""
+
+    DEFAULT_CSS = """
+    HelpModal {
+        align: center middle;
+    }
+    HelpModal > Vertical {
+        width: 60;
+        padding: 1 2;
+        border: thick $primary;
+        background: $surface;
+    }
+    """
+
+    BINDINGS = [("escape", "dismiss", "Close"), ("q", "dismiss", "Close")]
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static("Help", classes="modal-title")
+            yield Static(
+                "Arrow keys: navigate\n"
+                "Enter:      activate the focused thing\n"
+                "Tab:        cycle focus\n"
+                "Esc:        close modal / clear marks\n"
+                "Click:      mark message as range endpoint\n"
+                "\n"
+                "Accelerators (when no input is focused):\n"
+                "  W  Window…    S  Settings…   R  Redact…\n"
+                "  E  Export     Z  Wizard      H/?  Help     Q  Quit\n"
+            )
+            yield Button("Close", id="close", variant="primary")
+
+    def on_button_pressed(self, event) -> None:
+        self.dismiss(None)
