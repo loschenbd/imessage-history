@@ -46,6 +46,7 @@ class ImessageExportApp(App):
         ("w", "open_window_modal", "Window"),
         ("s", "open_settings_modal", "Settings"),
         ("r", "open_redact_modal", "Redact"),
+        ("e", "export", "Export"),
     ]
 
     def __init__(self) -> None:
@@ -220,3 +221,91 @@ class ImessageExportApp(App):
         if result is None:
             return
         self.state.redact = result
+
+    # ------------------------------------------------------------------
+    # Task 11: ExportConfirmModal + export worker
+    # ------------------------------------------------------------------
+
+    async def action_export(self) -> None:
+        from .modals import ExportConfirmModal
+        from .state import resolved_window
+
+        if self.state.selected_chat_id is None:
+            return
+
+        window = resolved_window(self.state)
+        chat_row = next((c for c in self.state.chats if c.get("chat_id") == self.state.selected_chat_id), {})
+        chat_label = (
+            chat_row.get("display_name")
+            or chat_row.get("participants")
+            or chat_row.get("chat_identifier")
+            or f"chat {self.state.selected_chat_id}"
+        )
+        n = self._count_messages_in_window(window)
+        summary = [
+            f"Chat:    {chat_label}",
+            f"Window:  {window!r}",
+            f"Count:   {n} messages",
+            f"Output:  {self.state.output_dir}",
+            f"Redact:  {'on' if self.state.redact else 'off'}",
+        ]
+        confirm = await self.push_screen_wait(ExportConfirmModal(summary_lines=summary))
+        if not confirm:
+            return
+
+        self._run_export_worker()
+
+    def _count_messages_in_window(self, window: dict) -> int:
+        msgs = self.state.selected_chat_messages
+        if not msgs or window.get("mode") == "all":
+            return len(msgs)
+        # Range/day mode: filter by date string prefix.
+        if window["mode"] == "day":
+            day = window["date"]
+            return sum(1 for m in msgs if m["timestamp"].startswith(day))
+        if window["mode"] == "range":
+            f, t = window["from_date"], window["to_date"]
+            return sum(1 for m in msgs if f <= m["timestamp"][:10] <= t)
+        return len(msgs)
+
+    @work(thread=True, exclusive=True)
+    def _run_export_worker(self) -> None:
+        import argparse
+        from ...cli import _run, DEFAULT_DB
+        from .state import resolved_window, reset_after_export
+
+        window = resolved_window(self.state)
+        ns = argparse.Namespace(
+            chat_id=self.state.selected_chat_id,
+            chat_identifier=None, participant=None,
+            list=False, list_limit=30, list_contacts=False,
+            from_date=window.get("from_date"), to_date=window.get("to_date"),
+            date=window.get("date"),
+            start_time=window.get("start_time"), end_time=window.get("end_time"),
+            start_datetime=None, end_datetime=None,
+            output_dir=str(self.state.output_dir),
+            me_name=self.state.me_name,
+            contacts=str(self.state.contacts_path) if self.state.contacts_path else None,
+            include_attachments=False,
+            limit=None,
+            db=str(DEFAULT_DB),
+            redact=self.state.redact.get("redact", False),
+            redact_only=self.state.redact.get("redact_only", False),
+            redact_names_file=self.state.redact.get("redact_names_file"),
+            no_redact_phones=self.state.redact.get("no_redact_phones", False),
+            no_redact_emails=self.state.redact.get("no_redact_emails", False),
+            no_redact_urls=self.state.redact.get("no_redact_urls", False),
+            suggest_names=False,
+            build_contacts=False,
+            wizard=False,
+            app=False,
+        )
+        rc = _run(ns, self.conn)
+        if rc == 0:
+            n = self._count_messages_in_window(window)
+            reset_after_export(self.state, success_tag=f"✓ Exported {n} msgs → {self.state.output_dir}")
+        self.call_from_thread(self._post_export_refresh)
+
+    def _post_export_refresh(self) -> None:
+        # Repaint marks (now cleared) and let the future status-line widget refresh.
+        self._repaint_marks()

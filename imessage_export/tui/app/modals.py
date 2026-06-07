@@ -222,3 +222,44 @@ class RedactModal(ModalScreen[Optional[dict]]):
             "no_redact_emails": not self.query_one("#cb-emails", Checkbox).value,
             "no_redact_urls":   not self.query_one("#cb-urls",   Checkbox).value,
         })
+
+
+class ExportConfirmModal(ModalScreen[bool]):
+    """Confirm the user wants to run the export with the resolved settings."""
+
+    DEFAULT_CSS = """
+    ExportConfirmModal {
+        align: center middle;
+    }
+    ExportConfirmModal > Vertical {
+        width: 70;
+        padding: 1 2;
+        border: thick $primary;
+        background: $surface;
+    }
+    """
+
+    BINDINGS = [
+        ("escape", "dismiss_no", "Cancel"),
+        ("y", "dismiss_yes", "Yes"),
+        ("n", "dismiss_no", "No"),
+    ]
+
+    def __init__(self, *, summary_lines: list[str]) -> None:
+        super().__init__()
+        self._lines = summary_lines
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static("Export?", classes="modal-title")
+            for line in self._lines:
+                yield Static(line)
+            with Horizontal():
+                yield Button("Cancel", id="cancel")
+                yield Button("Run", id="run", variant="primary")
+
+    def action_dismiss_yes(self) -> None: self.dismiss(True)
+    def action_dismiss_no(self)  -> None: self.dismiss(False)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(event.button.id == "run")
