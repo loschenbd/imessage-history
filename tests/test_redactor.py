@@ -256,5 +256,73 @@ class RedactTextTests(unittest.TestCase):
         self.assertEqual(out, "link ([URL])")
 
 
+class RedactMessagesTests(unittest.TestCase):
+    def _make(self):
+        messages = [
+            _msg(1, is_from_me=0, author_label="Alice", sender_handle="+15551234567",
+                 text="Hey Ben"),
+            _msg(2, is_from_me=1, author_label="Ben",   sender_handle=None,
+                 text="Hi Alice — email me at b@x.com"),
+        ]
+        md = _metadata([("+15551234567", "Alice")])
+        r = ie.Redactor(messages, md, contacts={"+15551234567": "Alice"},
+                        config=ie.RedactionConfig(me_name="Ben"))
+        return r, messages, md
+
+    def test_author_label_pseudonymized(self):
+        r, _, _ = self._make()
+        redacted = r.redact_messages()
+        self.assertEqual(redacted[0].author_label, "Person B")
+        self.assertEqual(redacted[1].author_label, "Person A")
+
+    def test_text_pseudonymized(self):
+        r, _, _ = self._make()
+        redacted = r.redact_messages()
+        self.assertEqual(redacted[0].text, "Hey Person A")
+        self.assertIn("Person B", redacted[1].text)
+        self.assertIn("[EMAIL]",  redacted[1].text)
+
+    def test_original_messages_untouched(self):
+        r, originals, _ = self._make()
+        _ = r.redact_messages()
+        self.assertEqual(originals[0].author_label, "Alice")
+        self.assertEqual(originals[0].text,         "Hey Ben")
+
+    def test_sender_handle_replaced_when_present(self):
+        r, _, _ = self._make()
+        redacted = r.redact_messages()
+        self.assertEqual(redacted[0].sender_handle, "Person B")
+        self.assertIsNone(redacted[1].sender_handle)
+
+
+class RedactMetadataTests(unittest.TestCase):
+    def test_participants_pseudonymized(self):
+        messages = [_msg(1, is_from_me=0, author_label="Alice", sender_handle="+15551234567")]
+        md = _metadata([("+15551234567", "Alice")])
+        r = ie.Redactor(messages, md, contacts={"+15551234567": "Alice"},
+                        config=ie.RedactionConfig(me_name="Ben"))
+        red_md = r.redact_metadata()
+        p = red_md["participants"][0]
+        self.assertEqual(p["resolved_name"], "Person B")
+        self.assertEqual(p["handle"],        "Person B")
+
+    def test_original_metadata_untouched(self):
+        messages = [_msg(1, is_from_me=0, author_label="Alice", sender_handle="+15551234567")]
+        md = _metadata([("+15551234567", "Alice")])
+        r = ie.Redactor(messages, md, contacts={"+15551234567": "Alice"},
+                        config=ie.RedactionConfig(me_name="Ben"))
+        _ = r.redact_metadata()
+        self.assertEqual(md["participants"][0]["resolved_name"], "Alice")
+
+
+class ChatLabelTests(unittest.TestCase):
+    def test_one_on_one_uses_other_party_pseudonym(self):
+        messages = [_msg(1, is_from_me=0, author_label="Alice", sender_handle="+15551234567")]
+        md = _metadata([("+15551234567", "Alice")])
+        r = ie.Redactor(messages, md, contacts={"+15551234567": "Alice"},
+                        config=ie.RedactionConfig(me_name="Ben"))
+        self.assertEqual(r.chat_label(), "Person B")
+
+
 if __name__ == "__main__":
     unittest.main()

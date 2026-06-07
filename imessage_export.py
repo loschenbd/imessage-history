@@ -21,6 +21,7 @@ Privacy & Security ▸ Full Disk Access ▸ add your terminal app.
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import json
 import os
@@ -319,6 +320,44 @@ class Redactor:
                     out = out[:idx] + pseudonym + out[idx + len(alias):]
                     start = idx + len(pseudonym)
         return out
+
+    def redact_messages(self) -> list[Message]:
+        out = []
+        for m in self._messages:
+            new = copy.deepcopy(m)
+            if new.author_label in self._alias_to_pseudonym:
+                new.author_label = self._alias_to_pseudonym[new.author_label]
+            if new.sender_handle and new.sender_handle in self._alias_to_pseudonym:
+                new.sender_handle = self._alias_to_pseudonym[new.sender_handle]
+            new.text = self._redact_text(new.text)
+            if new.reaction:
+                rdict = dict(new.reaction)
+                if rdict.get("target_text"):
+                    rdict["target_text"] = self._redact_text(rdict["target_text"])
+                if rdict.get("target_author") in self._alias_to_pseudonym:
+                    rdict["target_author"] = self._alias_to_pseudonym[rdict["target_author"]]
+                new.reaction = rdict
+            out.append(new)
+        return out
+
+    def redact_metadata(self) -> dict:
+        out = copy.deepcopy(self._metadata)
+        for p in out.get("participants", []):
+            for key in ("handle", "resolved_name"):
+                v = p.get(key)
+                if v and v in self._alias_to_pseudonym:
+                    p[key] = self._alias_to_pseudonym[v]
+        # me_name in metadata stays as the original label so the AI-ready header
+        # accurately describes who "Person A" is in the redacted view.
+        if out.get("me_name") in self._alias_to_pseudonym:
+            out["me_name"] = self._alias_to_pseudonym[out["me_name"]]
+        return out
+
+    def chat_label(self) -> str:
+        # 1:1 → the other participant's pseudonym.
+        # Group → fall back to the existing chat_label() applied to redacted metadata.
+        red_md = self.redact_metadata()
+        return chat_label(red_md)
 
 
 def classify_tapback(amt: int) -> Optional[tuple[str, bool]]:
