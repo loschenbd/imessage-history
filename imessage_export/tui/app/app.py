@@ -173,7 +173,10 @@ class ImessageExportApp(App):
             {"message_id": m.message_id, "timestamp": m.timestamp} for m in event.messages
         ]
         self.state.history_loading = False
+        self.state.history_search_query = None
         history = self.query_one(HistoryView)
+        for s in history.query("#history-search"):
+            s.remove()
         history.render_messages(event.messages)
         self._refresh_status()
 

@@ -183,5 +183,37 @@ class TestHistorySearch(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(app.state.history_search_query)
 
 
+class TestSearchClearsOnChatSwitch(unittest.IsolatedAsyncioTestCase):
+    async def test_switching_chats_closes_search_and_clears_query(self):
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        with _patched_app(tmpdir.name):
+            from imessage_export.tui.app.app import ImessageExportApp
+            from imessage_export.tui.app.widgets import HistoryView, Sidebar
+
+            app = ImessageExportApp()
+            async with app.run_test() as pilot:
+                await _boot_and_select_first_chat(pilot, app)
+                history = app.query_one(HistoryView)
+                history.open_search()
+                history.apply_search("hello")
+                await pilot.pause()
+                self.assertEqual(app.state.history_search_query, "hello")
+
+                sidebar = app.query_one(Sidebar)
+                if len(sidebar._all_chats) < 2:
+                    self.skipTest("fixture has fewer than 2 chats")
+                second_chat_id = sidebar._all_chats[1]["chat_id"]
+                sidebar.post_message(Sidebar.ChatSelected(second_chat_id))
+                await pilot.pause()
+                for _ in range(40):
+                    if app.state.selected_chat_id == second_chat_id and not app.state.history_loading:
+                        break
+                    await pilot.pause(delay=0.05)
+
+                self.assertEqual(len(history.query("#history-search")), 0)
+                self.assertIsNone(app.state.history_search_query)
+
+
 if __name__ == "__main__":
     unittest.main()
