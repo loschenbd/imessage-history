@@ -190,9 +190,26 @@ class HistoryView(VerticalScroll):
         ts = m.timestamp[11:19]  # HH:MM:SS
         speaker = m.author_label or ""
         body = (m.text or "").replace("\n", "\n          ")
+        # Resolve theme palette to literal hex codes at render time. Rich's
+        # style parser doesn't understand Textual's `$var` markup and
+        # silently drops unknown style names — so we can't put `$muted` /
+        # `$primary` directly in the style strings. Pull hex from the
+        # active palette instead. The day-header / range-highlight Static
+        # widgets still get their colors from App.CSS (theme variables),
+        # because Textual interpolates `$var` at CSS parse time.
+        from ..theme import PALETTES, resolve_palette
+        try:
+            pal = PALETTES[self.app.theme]
+        except (KeyError, AttributeError):
+            pal = resolve_palette()
+        is_me = bool(m.is_from_me)
+        # `$primary` is bound to `accent` and `$accent` is bound to
+        # `accent_alt` (see register_textual_themes), so use the same
+        # mapping here for "me" vs "other".
+        speaker_color = pal["accent_alt"] if is_me else pal["accent"]
         text = Text()
-        text.append(f"[{ts}] ", style="dim")
-        text.append(f"{speaker}: ", style="bold")
+        text.append(f"[{ts}] ", style=pal["muted"])
+        text.append(f"{speaker}: ", style=f"bold {speaker_color}")
         text.append(body)
         return text
 
