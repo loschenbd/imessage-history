@@ -401,6 +401,22 @@ class ImessageExportApp(App):
                 continue
             region.set_class(region is active_region, "region-active")
 
+        # Update the status chip too.
+        from .widgets import StatusLine
+        tag = "sidebar"
+        if active_region is not None:
+            from .widgets import HistoryView, ActionBar
+            if isinstance(active_region, HistoryView):
+                tag = "history"
+            elif isinstance(active_region, ActionBar):
+                tag = "actions"
+            else:
+                tag = "sidebar"
+        try:
+            self.query_one(StatusLine).set_focus_region(tag)
+        except Exception:
+            pass
+
     # ------------------------------------------------------------------
     # Task 10: RedactModal
     # ------------------------------------------------------------------
