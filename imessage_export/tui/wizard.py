@@ -37,7 +37,7 @@ def _step_banner(n: int, label: str):
     """Print a subtle step indicator above each prompt."""
     console.print(
         f"\n[dim]──[/dim] [bold cyan]Step {n}/{TOTAL_STEPS}[/bold cyan]  "
-        f"[white]{label}[/white]  [dim]──[/dim]"
+        f"{label}  [dim]──[/dim]"
     )
 
 
@@ -112,7 +112,7 @@ def run() -> int:
         conn.close()
 
     if rc == 0:
-        console.print("\n[bold green]✓[/bold green] [white]Export complete.[/white]")
+        console.print("\n[bold green]✓[/bold green] Export complete.")
         _maybe_show_preview(output_dir, info, window, redact_choices)
     return rc
 
@@ -126,8 +126,8 @@ def _welcome():
     console.print()
     console.print(Panel(
         "[bold cyan]imessage-export[/bold cyan]  [dim]·[/dim]  interactive mode\n\n"
-        "[white]Export a single conversation from your local Messages database\n"
-        "into AI-ready files. [bold]Everything stays on this machine.[/bold][/white]\n\n"
+        "Export a single conversation from your local Messages database\n"
+        "into AI-ready files. [bold]Everything stays on this machine.[/bold]\n\n"
         "[dim]Press Ctrl+C at any prompt to cancel.\n"
         "Run with --help to see the headless flag surface.[/dim]",
         title="[bold]Welcome[/bold]",
@@ -143,8 +143,8 @@ def _step_offer_build_contacts() -> Optional[Path]:
     console.print()
     console.print(Panel(
         "[yellow]No contacts file found.[/yellow]\n\n"
-        "[white]You can populate one in seconds by scanning macOS Contacts.\n"
-        "First scan triggers a one-time Contacts permission prompt.[/white]\n\n"
+        "You can populate one in seconds by scanning macOS Contacts.\n"
+        "First scan triggers a one-time Contacts permission prompt.\n\n"
         "[dim]This writes [bold]contacts.csv[/bold] in the current directory.[/dim]",
         title="[bold]Set up contacts[/bold]",
         title_align="left",
@@ -172,7 +172,7 @@ def _step_offer_build_contacts() -> Optional[Path]:
         return None
 
     count = write_csv(rows, target)
-    console.print(f"[bold green]✓[/bold green] [white]Wrote {count} contacts → [bold]{target}[/bold][/white]")
+    console.print(f"[bold green]✓[/bold green] Wrote {count} contacts → [bold]{target}[/bold]")
     return target
 
 
