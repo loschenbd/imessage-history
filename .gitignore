@@ -19,3 +19,7 @@ __pycache__/
 # Local-only settings, transcripts, and per-user state stay out of git.
 .claude/*
 !.claude/settings.json
+
+# Git worktrees — each branch's checkout lives under .worktrees/<branch>.
+# Never commit a worktree's contents (they're a mirror of another branch).
+.worktrees/
