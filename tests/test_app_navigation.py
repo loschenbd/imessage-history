@@ -115,5 +115,73 @@ class TestHistoryJumpBindings(unittest.IsolatedAsyncioTestCase):
                 self.assertIs(app.focused, rows[0])
 
 
+class TestHistorySearch(unittest.IsolatedAsyncioTestCase):
+    async def test_slash_opens_search_input(self):
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        with _patched_app(tmpdir.name):
+            from imessage_export.tui.app.app import ImessageExportApp
+            from imessage_export.tui.app.widgets import HistoryView
+
+            app = ImessageExportApp()
+            async with app.run_test() as pilot:
+                await _boot_and_select_first_chat(pilot, app)
+                history = app.query_one(HistoryView)
+                rows = list(history.query(".message-row"))
+                rows[0].focus()
+                await pilot.pause()
+                await pilot.press("slash")
+                await pilot.pause()
+                search = history.query("#history-search")
+                self.assertEqual(len(search), 1)
+                self.assertEqual(app.focused, search[0])
+
+    async def test_typing_in_search_filters_rendered_rows(self):
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        with _patched_app(tmpdir.name):
+            from imessage_export.tui.app.app import ImessageExportApp
+            from imessage_export.tui.app.widgets import HistoryView
+
+            app = ImessageExportApp()
+            async with app.run_test() as pilot:
+                await _boot_and_select_first_chat(pilot, app)
+                history = app.query_one(HistoryView)
+                full_messages = history._all_messages
+                token = next((m.text[:4] for m in full_messages if m.text and len(m.text) >= 4), None)
+                self.assertIsNotNone(token, "fixture should have at least one >=4-char message")
+
+                history.open_search()
+                await pilot.pause()
+                history.apply_search(token)
+                await pilot.pause()
+                rendered_rows = list(history.query(".message-row"))
+                ids = {getattr(r, "data_msg_id", None) for r in rendered_rows}
+                expected_ids = {m.message_id for m in full_messages if m.text and token.lower() in m.text.lower()}
+                self.assertEqual(ids, expected_ids)
+
+    async def test_esc_in_search_closes_and_restores(self):
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        with _patched_app(tmpdir.name):
+            from imessage_export.tui.app.app import ImessageExportApp
+            from imessage_export.tui.app.widgets import HistoryView
+
+            app = ImessageExportApp()
+            async with app.run_test() as pilot:
+                await _boot_and_select_first_chat(pilot, app)
+                history = app.query_one(HistoryView)
+                full_count = len(history.query(".message-row"))
+                history.open_search()
+                history.apply_search("xyzzy-no-match")
+                await pilot.pause()
+                self.assertEqual(len(history.query(".message-row")), 0)
+                history.close_search()
+                await pilot.pause()
+                self.assertEqual(len(history.query("#history-search")), 0)
+                self.assertEqual(len(history.query(".message-row")), full_count)
+                self.assertIsNone(app.state.history_search_query)
+
+
 if __name__ == "__main__":
     unittest.main()

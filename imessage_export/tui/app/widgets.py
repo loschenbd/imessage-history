@@ -124,6 +124,7 @@ class HistoryView(VerticalScroll):
     def __init__(self, *, id: str | None = None) -> None:
         super().__init__(id=id)
         self._placeholder_visible = True
+        self._all_messages: list = []
 
     def show_placeholder(self, text: str = "Pick a chat from the left.") -> None:
         self.remove_children()
@@ -136,6 +137,7 @@ class HistoryView(VerticalScroll):
 
     def render_messages(self, messages: list) -> None:
         """Render `messages` (list[Message]) into the pane."""
+        self._all_messages = list(messages)
         self.remove_children()
         self._placeholder_visible = False
         if not messages:
@@ -184,6 +186,7 @@ class HistoryView(VerticalScroll):
         ("end", "jump_end", "Last message"),
         ("pageup", "jump_pageup", "Page up"),
         ("pagedown", "jump_pagedown", "Page down"),
+        ("slash", "open_search", "Search"),
     ]
 
     def on_click(self, event) -> None:
@@ -236,6 +239,80 @@ class HistoryView(VerticalScroll):
             rows[-1].focus()
             return
         rows[min(len(rows) - 1, idx + self._page_step())].focus()
+
+    def action_open_search(self) -> None:
+        self.open_search()
+
+    def open_search(self) -> None:
+        """Mount the search input at the top of the pane and focus it."""
+        if self.query("#history-search"):
+            self.query_one("#history-search", Input).focus()
+            return
+        search = Input(placeholder="Search this chat… (Esc to close)", id="history-search")
+        # Mount BEFORE the first existing child so the search bar sits at the top.
+        self.mount(search, before=0 if self.children else None)
+        search.focus()
+
+    def apply_search(self, query: str) -> None:
+        """Re-render the pane filtered to messages matching `query`."""
+        from .state import filter_messages_by_query
+        self.app.state.history_search_query = query or None
+        filtered = filter_messages_by_query(self._all_messages, query)
+        full = self._all_messages
+        self._render_rows(filtered)
+        self._all_messages = full
+
+    def close_search(self) -> None:
+        """Remove the search input and restore the unfiltered view."""
+        for s in self.query("#history-search"):
+            s.remove()
+        self.app.state.history_search_query = None
+        cache = list(self._all_messages)
+        self._render_rows(cache)
+        self._all_messages = cache
+
+    def _render_rows(self, messages: list) -> None:
+        """Re-render only the row/header children, preserving #history-search."""
+        # Remove rendered content but keep the search input (if mounted).
+        self.remove_children(".message-row, .day-header, #history-placeholder")
+        self._placeholder_visible = False
+        if not messages:
+            ph = Static("No matches.", id="history-placeholder")
+            self.mount(ph)
+            self._placeholder_visible = True
+            return
+        last_date = None
+        for m in messages:
+            ts = m.timestamp  # "YYYY-MM-DD HH:MM:SS"
+            day = ts[:10]
+            if day != last_date:
+                dt = datetime.strptime(day, "%Y-%m-%d")
+                header = f"── {dt.strftime('%A, %B %-d, %Y')} ──"
+                self.mount(Static(header, classes="day-header"))
+                last_date = day
+            row = Static(self._format_row(m), classes="message-row")
+            row.can_focus = True
+            row.data_msg_id = m.message_id  # type: ignore[attr-defined]
+            self.mount(row)
+
+    def on_input_changed(self, event) -> None:
+        """As the user types in the search box, re-filter incrementally."""
+        if event.input.id == "history-search":
+            self.apply_search(event.value)
+
+    def on_input_submitted(self, event) -> None:
+        """Enter inside the search box focuses the first matching row."""
+        if event.input.id == "history-search":
+            for row in self.query(".message-row"):
+                row.focus()
+                return
+
+    def on_key(self, event) -> None:
+        focused = self.app.focused
+        if event.key == "escape" and focused is not None and getattr(focused, "id", None) == "history-search":
+            self.close_search()
+            event.prevent_default()
+            event.stop()
 
     def apply_marks(self, start_id: int | None, end_id: int | None, messages: list[dict]) -> None:
         """Repaint range highlight CSS classes based on current marks.
