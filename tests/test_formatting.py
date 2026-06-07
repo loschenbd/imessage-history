@@ -25,6 +25,12 @@ class Stub:
     attachment_filenames: list = field(default_factory=list)
     reaction: dict = None
     app_bundle: str = None
+    # Extended for CSV / JSON writer tests (Batch 4). asdict() only sees
+    # DECLARED fields, so write_csv / write_json need these to round-trip.
+    message_id: int = 0
+    timestamp_utc: str = ""
+    chat_id: int = 0
+    sender_handle: str = None
 
 
 class FormatDayLabelTests(unittest.TestCase):
@@ -346,6 +352,34 @@ class WriteMarkdownTests(unittest.TestCase):
         self.assertNotIn("_(edited; text not available)_", out)
         self.assertIn("_(edited)_", out)
         self.assertIn("_(attachment)_", out)
+
+
+import csv as csvmod
+
+from imessage_export import write_csv
+
+
+class WriteCsvLocalDateTests(unittest.TestCase):
+    def test_local_date_column_present_and_populated(self):
+        m1 = Stub(timestamp="2026-06-06 09:00:00", text="hi")
+        m2 = Stub(timestamp="2026-06-07 10:00:00", text="next day")
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "out.csv"
+            write_csv(p, [m1, m2])
+            with p.open() as f:
+                rows = list(csvmod.DictReader(f))
+        self.assertIn("local_date", rows[0])
+        self.assertEqual(rows[0]["local_date"], "2026-06-06")
+        self.assertEqual(rows[1]["local_date"], "2026-06-07")
+
+    def test_local_date_column_position_after_timestamp(self):
+        m = Stub(timestamp="2026-06-06 09:00:00", text="hi")
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "out.csv"
+            write_csv(p, [m])
+            header = p.read_text().splitlines()[0].split(",")
+        ts_idx = header.index("timestamp")
+        self.assertEqual(header[ts_idx + 1], "local_date")
 
 
 if __name__ == "__main__":

@@ -114,7 +114,7 @@ class EndToEndExportTests(unittest.TestCase):
         header = (out / "conversation.csv").read_text().splitlines()[0]
         # Column set should match the documented schema
         expected_cols = {
-            "message_id", "timestamp", "timestamp_utc", "chat_id",
+            "message_id", "timestamp", "local_date", "timestamp_utc", "chat_id",
             "sender_handle", "is_from_me", "author_label",
             "kind", "is_edited", "reaction_type", "reaction_target",
             "app_bundle",

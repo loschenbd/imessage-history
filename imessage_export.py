@@ -745,7 +745,7 @@ def slugify(s: str) -> str:
 
 def write_csv(path: Path, messages: list[Message]):
     fields = [
-        "message_id", "timestamp", "timestamp_utc", "chat_id",
+        "message_id", "timestamp", "local_date", "timestamp_utc", "chat_id",
         "sender_handle", "is_from_me", "author_label",
         "kind", "is_edited", "reaction_type", "reaction_target",
         "app_bundle",
@@ -757,6 +757,7 @@ def write_csv(path: Path, messages: list[Message]):
         for m in messages:
             row = asdict(m)
             row["attachment_filenames"] = "|".join(m.attachment_filenames)
+            row["local_date"] = m.timestamp[:10] if m.timestamp else ""
             if m.reaction:
                 row["reaction_type"] = m.reaction.get("type", "")
                 target = m.reaction.get("target_text") or ""
