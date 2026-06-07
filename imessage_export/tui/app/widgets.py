@@ -161,29 +161,51 @@ class HistoryView(VerticalScroll):
         self.show_placeholder("Loading…")
 
     def render_messages(self, messages: list) -> None:
-        """Render `messages` (list[Message]) into the pane."""
+        """Render `messages` as ONE Rich Text blob inside a single Static.
+
+        Previously this mounted one Static per message — which made a 944
+        message chat sluggish and a 70k chat hang forever (mount() runs
+        on the UI thread, and each call invalidates layout). Terminal
+        rendering is cell-based, so a single big Static inside a
+        VerticalScroll is effectively virtualized: only the lines visible
+        in the viewport actually paint, no matter how long the blob is.
+
+        Trade-off: click-on-a-row-to-mark-range stops working because
+        there are no per-row widgets to attach data_msg_id to. The Window
+        modal handles date-range selection by typed dates instead.
+        """
         self.remove_children()
         self._placeholder_visible = False
         if not messages:
             self.show_placeholder("No messages in this chat.")
             return
 
+        blob = Text()
         last_date = None
         for m in messages:
             ts = m.timestamp  # "YYYY-MM-DD HH:MM:SS"
             day = ts[:10]
             if day != last_date:
                 dt = datetime.strptime(day, "%Y-%m-%d")
-                header = f"── {dt.strftime('%A, %B %-d, %Y')} ──"
-                self.mount(Static(header, classes="day-header"))
+                if last_date is not None:
+                    blob.append("\n")
+                blob.append(
+                    f"── {dt.strftime('%A, %B %-d, %Y')} ──\n",
+                    style="bold cyan",
+                )
                 last_date = day
-            row = Static(self._format_row(m), classes="message-row")
-            row.data_msg_id = m.message_id  # type: ignore[attr-defined]
-            self.mount(row)
+            ts_str = ts[11:19]
+            speaker = m.author_label or ""
+            body = (m.text or "").replace("\n", "\n          ")
+            blob.append(f"[{ts_str}] ", style="dim")
+            blob.append(f"{speaker}: ", style="bold")
+            blob.append(body)
+            blob.append("\n")
 
-        # Jump to the most recent message. Has to wait for the layout pass
-        # — scrolling immediately after .mount() lands at the top because
-        # children don't have computed sizes yet.
+        self.mount(Static(blob, classes="history-blob"))
+        # Jump to the most recent message. Layout has to settle first;
+        # scrolling immediately after .mount() lands at the top because
+        # the blob's height isn't computed yet.
         self.call_after_refresh(self.scroll_end, animate=False)
 
     def _format_row(self, m) -> Text:

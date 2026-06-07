@@ -145,6 +145,22 @@ class ImessageExportApp(App):
                 self.state.contacts = load_contacts(Path(path))
             except Exception:
                 self.state.contacts = {}
+        # Wire the contacts into the Sidebar so the chat list renders
+        # "Name (handle)" pairs instead of bare phone numbers, matching
+        # the wizard. The Sidebar was constructed with contacts={} before
+        # this callback ran.
+        try:
+            sidebar = self.query_one(Sidebar)
+        except Exception:
+            return
+        sidebar._contacts = self.state.contacts
+        current_filter = ""
+        try:
+            from textual.widgets import Input
+            current_filter = sidebar.query_one("#sidebar-filter", Input).value
+        except Exception:
+            pass
+        sidebar._refresh_list(current_filter)
 
     async def _offer_contacts_scan(self) -> None:
         from .modals import ContactsScanModal
