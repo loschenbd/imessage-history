@@ -407,5 +407,66 @@ class TestHelpModalText(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("Redact", body_text)
 
 
+class TestKeyboardOnlyHappyPath(unittest.IsolatedAsyncioTestCase):
+    async def test_full_keyboard_flow_to_range_set_and_cleared(self):
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        with _patched_app(tmpdir.name):
+            from imessage_export.tui.app.app import ImessageExportApp
+            from imessage_export.tui.app.widgets import Sidebar, HistoryView
+            from textual.widgets import ListView
+
+            app = ImessageExportApp()
+            async with app.run_test() as pilot:
+                for _ in range(20):
+                    sidebar = app.query_one(Sidebar)
+                    if sidebar._all_chats:
+                        break
+                    await pilot.pause(delay=0.05)
+                sidebar = app.query_one(Sidebar)
+                lv = sidebar.query_one(ListView)
+                lv.focus()
+                await pilot.pause()
+
+                # Pick the first chat (Alice) — no filtering needed for fixture.
+                first_chat_id = sidebar._all_chats[0]["chat_id"]
+                sidebar.post_message(Sidebar.ChatSelected(first_chat_id))
+                await pilot.pause()
+                for _ in range(40):
+                    if not app.state.history_loading and app.state.selected_chat_messages:
+                        break
+                    await pilot.pause(delay=0.05)
+
+                # Focus auto-moved to first message row (Task 7).
+                history = app.query_one(HistoryView)
+                rows = list(history.query(".message-row"))
+                self.assertGreater(len(rows), 1)
+                # Allow Pilot a moment for Task 7's focus-after-render to settle.
+                for _ in range(10):
+                    if app.focused is rows[0]:
+                        break
+                    await pilot.pause(delay=0.05)
+                self.assertIs(app.focused, rows[0])
+
+                # Enter marks the first row, then End + Enter marks the last.
+                await pilot.press("enter")
+                await pilot.pause()
+                history.action_jump_end()
+                await pilot.pause()
+                await pilot.press("enter")
+                await pilot.pause()
+
+                # State should reflect a complete range.
+                self.assertIsNotNone(app.state.range_start_msg_id)
+                self.assertIsNotNone(app.state.range_end_msg_id)
+                self.assertEqual(app.state.window_source, "selection")
+
+                # Esc clears marks.
+                await pilot.press("escape")
+                await pilot.pause()
+                self.assertIsNone(app.state.range_start_msg_id)
+                self.assertIsNone(app.state.range_end_msg_id)
+
+
 if __name__ == "__main__":
     unittest.main()
