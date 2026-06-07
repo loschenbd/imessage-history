@@ -4,7 +4,13 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from imessage_export.tui.app.state import AppState, _format_window, resolved_window, reset_after_export
+from imessage_export.tui.app.state import (
+    AppState,
+    _format_window,
+    filter_messages_by_query,
+    resolved_window,
+    reset_after_export,
+)
 
 
 class TestResolvedWindow(unittest.TestCase):
@@ -153,6 +159,51 @@ class TestResetAfterExport(unittest.TestCase):
 
         # Tagged
         self.assertEqual(s.last_export_status, "exported 4 msgs → /tmp/out")
+
+
+class TestHistorySearchQueryField(unittest.TestCase):
+    def test_default_is_none(self):
+        s = AppState()
+        self.assertIsNone(s.history_search_query)
+
+    def test_reset_after_export_does_not_clear_search(self):
+        s = AppState(history_search_query="hello")
+        reset_after_export(s, success_tag="ok")
+        self.assertEqual(s.history_search_query, "hello")  # search clears on chat switch, not on export
+
+
+class _Msg:
+    """Lightweight stand-in for the Message dataclass used by HistoryView."""
+    def __init__(self, mid, text):
+        self.message_id = mid
+        self.text = text
+        self.timestamp = "2026-06-06 09:00:00"
+        self.author_label = "Alice"
+
+
+class TestFilterMessagesByQuery(unittest.TestCase):
+    def test_none_query_returns_all(self):
+        msgs = [_Msg(1, "hello"), _Msg(2, "world")]
+        self.assertEqual(filter_messages_by_query(msgs, None), msgs)
+
+    def test_empty_query_returns_all(self):
+        msgs = [_Msg(1, "hello"), _Msg(2, "world")]
+        self.assertEqual(filter_messages_by_query(msgs, ""), msgs)
+
+    def test_case_insensitive_substring_match(self):
+        msgs = [_Msg(1, "Hello there"), _Msg(2, "GOODBYE"), _Msg(3, "say hello again")]
+        out = filter_messages_by_query(msgs, "HELLO")
+        self.assertEqual([m.message_id for m in out], [1, 3])
+
+    def test_no_match_returns_empty(self):
+        msgs = [_Msg(1, "hello"), _Msg(2, "world")]
+        self.assertEqual(filter_messages_by_query(msgs, "xyzzy"), [])
+
+    def test_handles_none_text(self):
+        # Messages can have text=None (edited/unsent rows) — must not crash.
+        msgs = [_Msg(1, None), _Msg(2, "hello")]
+        out = filter_messages_by_query(msgs, "hello")
+        self.assertEqual([m.message_id for m in out], [2])
 
 
 if __name__ == "__main__":

@@ -38,6 +38,7 @@ class AppState:
     # ephemeral
     last_export_status: Optional[str] = None
     history_loading: bool = False
+    history_search_query: Optional[str] = None
 
 
 def resolved_window(state: AppState) -> dict:
@@ -117,3 +118,16 @@ def reset_after_export(state: AppState, *, success_tag: str) -> None:
     state.typed_window = None
     state.window_source = "all"
     state.last_export_status = success_tag
+
+
+def filter_messages_by_query(messages: list, query: Optional[str]) -> list:
+    """Return messages whose `text` contains `query` (case-insensitive).
+
+    `messages` is a list of Message-like objects with a `.text` attribute.
+    `query` of None or "" returns the input unchanged. Messages with `text=None`
+    are skipped (treated as non-matching).
+    """
+    if not query:
+        return list(messages)
+    q = query.lower()
+    return [m for m in messages if m.text and q in m.text.lower()]
