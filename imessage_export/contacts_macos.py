@@ -125,13 +125,17 @@ def fetch_contacts() -> list[tuple[str, str]]:
 
 
 def _normalize_phone(s: str) -> str:
-    """Strip spaces, dashes, parens, dots. Keep a leading +."""
+    """Canonicalize to "+<digits>". 10-digit US numbers get a "+1" prefix so
+    they match iMessage handles (which always include the country code)."""
     s = s.strip()
     if not s:
         return s
-    keep_plus = s.startswith("+")
     digits = re.sub(r"\D", "", s)
-    return ("+" + digits) if keep_plus else digits
+    if not digits:
+        return s
+    if len(digits) == 10:
+        digits = "1" + digits
+    return "+" + digits
 
 
 def _normalize_handle(raw: str) -> str:

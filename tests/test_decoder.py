@@ -146,7 +146,9 @@ class NormalizeHandleTests(unittest.TestCase):
         self.assertEqual(ie.normalize_handle("+1 (555) 123-4567"), "+15551234567")
 
     def test_phone_digits_without_plus(self):
-        self.assertEqual(ie.normalize_handle("5551234567"), "+5551234567")
+        # 10-digit US numbers get the +1 country code prepended so they match
+        # the +1XXXXXXXXXX form iMessage uses in chat.db.
+        self.assertEqual(ie.normalize_handle("5551234567"), "+15551234567")
 
 
 class ChatLabelTests(unittest.TestCase):
