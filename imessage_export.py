@@ -934,7 +934,11 @@ def write_txt(path: Path, messages: list["Message"]):
                 first = False
 
 
-def write_ai_ready(path: Path, messages: list[Message], metadata: dict):
+def write_ai_ready(path: Path, messages: list["Message"], metadata: dict):
+    """LLM-fed export. Same day-header / gap-marker / indented-continuation
+    conventions as conversation.txt, but EACH MESSAGE LINE keeps the full
+    [YYYY-MM-DD HH:MM:SS] prefix so an LLM never has to scan upward for the
+    date when reasoning about attribution."""
     parts = metadata["participants"]
     participant_list = ", ".join(
         f"{p['resolved_name']} <{p['handle']}>" for p in parts
@@ -949,6 +953,11 @@ def write_ai_ready(path: Path, messages: list[Message], metadata: dict):
         f"Requested window (local, {win['tz']}): {win['local_start']} → {win['local_end']}",
         f"Requested window (UTC): {win['utc_start']} → {win['utc_end']}",
         "Format: [YYYY-MM-DD HH:MM:SS] <Speaker>: <message>",
+        "Day headers (── Day, Month D, Year ──) and gap markers "
+        "(── X min later ──) are navigation aids inserted by the exporter, "
+        "not authored content.",
+        "Indented continuation lines (4 spaces) belong to the speaker on "
+        "the line above.",
         "-" * 72,
         "",
     ]
@@ -964,8 +973,19 @@ def write_ai_ready(path: Path, messages: list[Message], metadata: dict):
     ]
     with path.open("w") as f:
         f.write("\n".join(header))
-        for m in messages:
-            f.write(format_txt_line(m) + "\n")
+        first = True
+        for event in iter_render_events(messages):
+            kind = event[0]
+            if kind == "day":
+                if not first:
+                    f.write("\n")
+                f.write(f"── {format_day_label(event[1])} ──\n\n")
+                first = False
+            elif kind == "gap":
+                f.write(f"\n── {format_gap(event[1])} ──\n\n")
+            else:
+                f.write(render_txt_message(event[1], time_format="full") + "\n")
+                first = False
         f.write("\n".join(footer) + "\n")
 
 

@@ -213,5 +213,53 @@ class WriteTxtTests(unittest.TestCase):
         self.assertIn("    Two.", out)
 
 
+from imessage_export import write_ai_ready
+
+
+class WriteAiReadyTests(unittest.TestCase):
+    META = {
+        "participants": [{"resolved_name": "Mallory", "handle": "+14026608922"}],
+        "me_name": "Ben",
+        "message_count": 1,
+        "actual_first_local": "2026-06-06 09:00:00",
+        "actual_last_local": "2026-06-06 09:00:00",
+        "window": {
+            "local_start": "2026-06-06 08:30:00",
+            "local_end": "2026-06-06 16:00:00",
+            "utc_start": "2026-06-06T15:30:00+00:00",
+            "utc_end": "2026-06-06T23:00:00+00:00",
+            "tz": "PDT",
+        },
+    }
+
+    def _write(self, messages, meta=None) -> str:
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "out.txt"
+            write_ai_ready(p, messages, meta or self.META)
+            return p.read_text()
+
+    def test_header_documents_day_header_convention(self):
+        m = Stub(timestamp="2026-06-06 09:00:00", text="hi")
+        out = self._write([m])
+        self.assertIn("Day headers", out)
+        self.assertIn("Indented", out)
+
+    def test_full_datetime_prefix_preserved(self):
+        m = Stub(timestamp="2026-06-06 09:00:00", text="hi")
+        out = self._write([m])
+        self.assertIn("[2026-06-06 09:00:00] Ben: hi", out)
+
+    def test_day_header_and_gap_marker_appear(self):
+        m1 = Stub(timestamp="2026-06-06 09:00:00", text="hi")
+        m2 = Stub(timestamp="2026-06-06 10:00:00", text="back")
+        out = self._write([m1, m2], meta={
+            **self.META,
+            "message_count": 2,
+            "actual_last_local": "2026-06-06 10:00:00",
+        })
+        self.assertIn("── Saturday, June 6, 2026 ──", out)
+        self.assertIn("── 1h later ──", out)
+
+
 if __name__ == "__main__":
     unittest.main()
