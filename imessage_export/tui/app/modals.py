@@ -388,3 +388,9 @@ class ErrorModal(ModalScreen[None]):
             self.app.exit(2)
         else:
             self.dismiss(None)
+
+    def action_dismiss(self) -> None:
+        if self._quit_on_close:
+            self.app.exit(2)
+        else:
+            self.dismiss(None)
