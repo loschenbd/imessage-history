@@ -191,6 +191,91 @@ def _excel_letters(n: int) -> str:
     return s
 
 
+class Redactor:
+    """Build a deterministic alias→pseudonym map for one conversation.
+
+    Inputs:
+      messages : list[Message]    (timeline order, as produced by export())
+      metadata : dict             (the metadata dict produced by export())
+      contacts : dict[str, str]   (handle → name, as loaded from contacts.csv)
+      config   : RedactionConfig
+
+    The map is built once at __init__ time and re-used by the redact_* methods.
+    """
+
+    def __init__(self, messages, metadata, contacts, config):
+        self._messages  = messages
+        self._metadata  = metadata
+        self._contacts  = contacts or {}
+        self._config    = config
+        self._alias_to_pseudonym: dict[str, str] = {}
+        self._pseudonym_to_aliases: dict[str, list[str]] = {}
+        self._build_pseudonym_map()
+
+    def _assign_pseudonym(self, alias: str, pseudonym: str) -> None:
+        """Map alias → pseudonym. No-op if alias already mapped."""
+        if not alias or alias in self._alias_to_pseudonym:
+            return
+        self._alias_to_pseudonym[alias] = pseudonym
+        self._pseudonym_to_aliases.setdefault(pseudonym, []).append(alias)
+
+    def _new_pseudonym(self) -> str:
+        n = len(self._pseudonym_to_aliases)
+        return f"Person {_excel_letters(n)}"
+
+    def _ensure_person(self, primary_alias: str, *aliases: str) -> str:
+        """Get (or create) the pseudonym for primary_alias, registering aliases under it."""
+        existing = self._alias_to_pseudonym.get(primary_alias)
+        if existing is None:
+            existing = self._new_pseudonym()
+        self._assign_pseudonym(primary_alias, existing)
+        for a in aliases:
+            self._assign_pseudonym(a, existing)
+        return existing
+
+    def _build_pseudonym_map(self) -> None:
+        # 1. Device owner is always Person A.
+        self._ensure_person(self._config.me_name)
+
+        # 2. Walk the message timeline assigning new speakers.
+        for m in self._messages:
+            if m.is_from_me:
+                # Outgoing — author is me; nothing new to register.
+                continue
+            label  = m.author_label
+            handle = m.sender_handle
+            # Both label and handle (when present) belong to the same person.
+            if label:
+                self._ensure_person(label, *([handle] if handle else []))
+            elif handle:
+                self._ensure_person(handle)
+
+        # 3. Register all contact names (even ones not in this conversation —
+        #    they may be mentioned in body text from third-party speakers).
+        for handle, name in self._contacts.items():
+            if name and name not in self._alias_to_pseudonym:
+                # Brand-new person from contacts.csv — new pseudonym.
+                self._ensure_person(name, handle)
+            elif name:
+                # Name already mapped (it's a participant) — link the handle.
+                self._ensure_person(name, handle)
+
+        # 4. Register --redact-names-file extras.
+        for extra in self._config.extra_names:
+            if extra:
+                self._ensure_person(extra)
+
+    def pseudonym_map(self) -> dict:
+        people = [
+            {"pseudonym": p, "aliases": list(aliases)}
+            for p, aliases in sorted(self._pseudonym_to_aliases.items())
+        ]
+        return {
+            "aliases_to_pseudonym": dict(self._alias_to_pseudonym),
+            "people": people,
+        }
+
+
 def classify_tapback(amt: int) -> Optional[tuple[str, bool]]:
     """Return (name, removed) or None for non-tapbacks."""
     if 2000 <= amt <= 2006:

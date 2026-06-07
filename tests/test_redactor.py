@@ -46,5 +46,102 @@ class RedactionConfigTests(unittest.TestCase):
         self.assertFalse(cfg.redact_phones)
 
 
+def _msg(message_id, is_from_me, author_label, timestamp="2025-05-01 14:00:00",
+         sender_handle=None, text="", chat_id=1):
+    """Build a Message with sensible defaults for redactor tests."""
+    return ie.Message(
+        message_id=message_id,
+        timestamp=timestamp,
+        timestamp_utc=timestamp.replace(" ", "T") + "+00:00",
+        chat_id=chat_id,
+        sender_handle=sender_handle,
+        is_from_me=is_from_me,
+        author_label=author_label,
+        text=text,
+        has_attachment=0,
+        attachment_filenames=[],
+    )
+
+
+def _metadata(participants):
+    return {
+        "me_name": "Ben",
+        "participants": [
+            {"handle": h, "service": "iMessage", "resolved_name": name}
+            for h, name in participants
+        ],
+        "window": {"local_start": "", "local_end": "", "utc_start": "", "utc_end": "",
+                   "tz": "UTC", "apple_ns_start": None, "apple_ns_end": None,
+                   "input": {}},
+        "actual_first_local": "2025-05-01 14:00:00",
+        "actual_last_local":  "2025-05-01 14:05:00",
+        "chats": [{"display_name": "", "style": 45, "chat_identifier": "+15551234567",
+                   "is_group": False}],
+        "message_count": 1,
+        "chat_ids": [1],
+        "exported_at": "2025-05-01T14:05:00+00:00",
+        "timestamp_unit_detected": "ns",
+        "attribution_note": "",
+    }
+
+
+class PseudonymMapTests(unittest.TestCase):
+    def test_me_is_always_person_a_even_if_speaks_second(self):
+        messages = [
+            _msg(1, is_from_me=0, author_label="Alice", sender_handle="+15551234567"),
+            _msg(2, is_from_me=1, author_label="Ben",   sender_handle=None),
+        ]
+        md = _metadata([("+15551234567", "Alice")])
+        r = ie.Redactor(messages, md, contacts={"+15551234567": "Alice"},
+                        config=ie.RedactionConfig(me_name="Ben"))
+        pmap = r.pseudonym_map()
+        self.assertEqual(pmap["aliases_to_pseudonym"]["Ben"], "Person A")
+        self.assertEqual(pmap["aliases_to_pseudonym"]["Alice"], "Person B")
+
+    def test_timeline_ordered_b_then_c(self):
+        # Alice speaks first, then Bob — group chat
+        messages = [
+            _msg(1, is_from_me=0, author_label="Alice", sender_handle="+15551234567"),
+            _msg(2, is_from_me=0, author_label="Bob",   sender_handle="+15557654321"),
+            _msg(3, is_from_me=1, author_label="Ben",   sender_handle=None),
+        ]
+        md = _metadata([("+15551234567", "Alice"), ("+15557654321", "Bob")])
+        r = ie.Redactor(messages, md, contacts={
+                            "+15551234567": "Alice", "+15557654321": "Bob"},
+                        config=ie.RedactionConfig(me_name="Ben"))
+        pmap = r.pseudonym_map()["aliases_to_pseudonym"]
+        self.assertEqual(pmap["Ben"],   "Person A")
+        self.assertEqual(pmap["Alice"], "Person B")
+        self.assertEqual(pmap["Bob"],   "Person C")
+
+    def test_handles_share_pseudonym_with_name(self):
+        # The handle and the contact name both map to the same Person
+        messages = [_msg(1, is_from_me=0, author_label="Alice", sender_handle="+15551234567")]
+        md = _metadata([("+15551234567", "Alice")])
+        r = ie.Redactor(messages, md, contacts={"+15551234567": "Alice"},
+                        config=ie.RedactionConfig(me_name="Ben"))
+        pmap = r.pseudonym_map()["aliases_to_pseudonym"]
+        self.assertEqual(pmap["Alice"],         pmap["+15551234567"])
+
+    def test_extra_names_get_their_own_pseudonym(self):
+        messages = [_msg(1, is_from_me=0, author_label="Alice", sender_handle="+15551234567")]
+        md = _metadata([("+15551234567", "Alice")])
+        r = ie.Redactor(messages, md, contacts={"+15551234567": "Alice"},
+                        config=ie.RedactionConfig(me_name="Ben", extra_names=["Carol"]))
+        pmap = r.pseudonym_map()["aliases_to_pseudonym"]
+        self.assertEqual(pmap["Carol"], "Person C")  # after Ben(A) and Alice(B)
+
+    def test_grouped_view_present(self):
+        messages = [_msg(1, is_from_me=1, author_label="Ben")]
+        md = _metadata([])
+        r = ie.Redactor(messages, md, contacts={},
+                        config=ie.RedactionConfig(me_name="Ben"))
+        pmap = r.pseudonym_map()
+        self.assertIn("people", pmap)
+        self.assertIn("aliases_to_pseudonym", pmap)
+        person_a = next(p for p in pmap["people"] if p["pseudonym"] == "Person A")
+        self.assertIn("Ben", person_a["aliases"])
+
+
 if __name__ == "__main__":
     unittest.main()
