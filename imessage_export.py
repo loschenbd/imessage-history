@@ -307,19 +307,13 @@ class Redactor:
         case_sensitive = self._config.case_sensitive
         for alias in self._ordered_aliases():
             pseudonym = self._alias_to_pseudonym[alias]
-            if case_sensitive:
-                out = out.replace(alias, pseudonym)
-            else:
-                # Case-insensitive literal replace. Loop so all occurrences fire.
-                # We rebuild lowercased indexes each pass since `out` shrinks/grows.
-                lower_alias = alias.lower()
-                start = 0
-                while True:
-                    idx = out.lower().find(lower_alias, start)
-                    if idx == -1:
-                        break
-                    out = out[:idx] + pseudonym + out[idx + len(alias):]
-                    start = idx + len(pseudonym)
+            # `(?<!\w)alias(?!\w)` matches the alias only when not adjacent to
+            # word characters. Prevents "Ben" from matching inside "Bend",
+            # "Alice" inside "Alicethe", etc. `re.escape` neutralizes any
+            # regex metacharacters in user-supplied contact names.
+            flags = 0 if case_sensitive else re.IGNORECASE
+            pattern = r"(?<!\w)" + re.escape(alias) + r"(?!\w)"
+            out = re.sub(pattern, pseudonym, out, flags=flags)
         return out
 
     def redact_messages(self) -> list[Message]:
