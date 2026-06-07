@@ -44,8 +44,17 @@ def _step_banner(n: int, label: str):
 def run() -> int:
     """Drive the wizard. Returns process exit code."""
     defaults = load_defaults()
+    _welcome()
     contacts_for_picker = _load_contacts_for_picker(defaults)
-    _welcome(has_contacts=bool(contacts_for_picker))
+    if not contacts_for_picker:
+        scanned_path = _step_offer_build_contacts()
+        if scanned_path is not None:
+            try:
+                from ..contacts import load_contacts
+                contacts_for_picker = load_contacts(scanned_path)
+                defaults.contacts_path = str(scanned_path)
+            except Exception:
+                contacts_for_picker = {}
 
     try:
         conn = open_db(_default_db_path())
@@ -113,18 +122,12 @@ def run() -> int:
 # ──────────────────────────────────────────────────────────────────────────
 
 
-def _welcome(has_contacts: bool = True):
-    hint = "" if has_contacts else (
-        "\n\n[yellow]Tip:[/yellow] [white]No contacts file found. "
-        "Run [bold]imessage-export --build-contacts[/bold] once to "
-        "populate it from macOS Contacts.app.[/white]"
-    )
-    console.print()  # leading whitespace
+def _welcome():
+    console.print()
     console.print(Panel(
         "[bold cyan]imessage-export[/bold cyan]  [dim]·[/dim]  interactive mode\n\n"
         "[white]Export a single conversation from your local Messages database\n"
-        "into AI-ready files. [bold]Everything stays on this machine.[/bold][/white]"
-        + hint + "\n\n"
+        "into AI-ready files. [bold]Everything stays on this machine.[/bold][/white]\n\n"
         "[dim]Press Ctrl+C at any prompt to cancel.\n"
         "Run with --help to see the headless flag surface.[/dim]",
         title="[bold]Welcome[/bold]",
@@ -132,6 +135,45 @@ def _welcome(has_contacts: bool = True):
         border_style="cyan",
         padding=(1, 2),
     ))
+
+
+def _step_offer_build_contacts() -> Optional[Path]:
+    """Offer to scan macOS Contacts.app and write contacts.csv. Returns the
+    written path on success, None if the user declines or the scan fails."""
+    console.print()
+    console.print(Panel(
+        "[yellow]No contacts file found.[/yellow]\n\n"
+        "[white]You can populate one in seconds by scanning macOS Contacts.\n"
+        "First scan triggers a one-time Contacts permission prompt.[/white]\n\n"
+        "[dim]This writes [bold]contacts.csv[/bold] in the current directory.[/dim]",
+        title="[bold]Set up contacts[/bold]",
+        title_align="left",
+        border_style="yellow",
+        padding=(1, 2),
+    ))
+    answer = questionary.confirm(
+        "Scan macOS Contacts now? (recommended)",
+        default=True,
+    ).ask()
+    if not answer:
+        return None
+
+    target = Path.cwd() / "contacts.csv"
+    from ..contacts_macos import fetch_contacts, write_csv
+    try:
+        with console.status("[bold cyan]Reading Contacts.app… (up to 5 min on large books)[/bold cyan]", spinner="dots"):
+            rows = fetch_contacts()
+    except RuntimeError as e:
+        console.print(f"[red]Could not read Contacts:[/red] {e}")
+        return None
+
+    if not rows:
+        console.print("[yellow]No contacts found in Contacts.app — proceeding without.[/yellow]")
+        return None
+
+    count = write_csv(rows, target)
+    console.print(f"[bold green]✓[/bold green] [white]Wrote {count} contacts → [bold]{target}[/bold][/white]")
+    return target
 
 
 def _load_contacts_for_picker(defaults) -> dict:
@@ -192,17 +234,48 @@ def _format_chat_row(r: dict, contacts: dict) -> str:
 
 
 def _resolve_names(raw: str, contacts: dict) -> str:
-    """Apply the contacts map to a handle or comma-separated handle list.
-    Falls back to the raw handle when no mapping exists. Dedups names."""
+    """Render a handle (or comma-joined handle list) as "Name (handle)" pairs.
+
+    Falls back to bare handle when no contact match. Both the name AND the
+    handle stay in the visible string so questionary's type-to-filter works
+    against either. Dedupes by name when multiple handles resolve to the
+    same person (e.g. email + phone for the same contact)."""
     from ..contacts import normalize_handle
-    seen = []
+
+    pairs: list[tuple[str, list[str]]] = []  # [(name_or_handle, [handles])]
+    seen_keys = set()
+
     for piece in raw.split(","):
         h = piece.strip()
+        if not h:
+            continue
         key = normalize_handle(h)
-        name = contacts.get(key) or contacts.get(h) or h
-        if name not in seen:
-            seen.append(name)
-    return ", ".join(seen)
+        name = contacts.get(key) or contacts.get(h)
+        if name:
+            dedupe_key = ("name", name)
+            if dedupe_key in seen_keys:
+                for entry in pairs:
+                    if entry[0] == name:
+                        if h not in entry[1]:
+                            entry[1].append(h)
+                        break
+            else:
+                seen_keys.add(dedupe_key)
+                pairs.append((name, [h]))
+        else:
+            dedupe_key = ("handle", key or h)
+            if dedupe_key in seen_keys:
+                continue
+            seen_keys.add(dedupe_key)
+            pairs.append((h, []))
+
+    parts = []
+    for label, handles in pairs:
+        if handles:
+            parts.append(f"{label} ({', '.join(handles)})")
+        else:
+            parts.append(label)
+    return ", ".join(parts)
 
 
 def _step_pick_window(info: dict):
