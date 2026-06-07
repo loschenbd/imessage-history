@@ -232,6 +232,29 @@ class RedactTextTests(unittest.TestCase):
         self.assertNotIn("O'Brien", out)
         self.assertNotIn("(work)",  out)
 
+    def test_phone_does_not_eat_following_word(self):
+        r = self._make()
+        # Order numbers / confirmation codes may get matched as phones (false positive,
+        # acceptable). But the match must not consume the space that follows.
+        out = r._redact_text("order #12345678 confirmed")
+        self.assertIn(" confirmed", out)
+        self.assertNotIn("[PHONE]confirmed", out)
+
+    def test_url_does_not_eat_trailing_period(self):
+        r = self._make()
+        out = r._redact_text("see https://example.com.")
+        self.assertEqual(out, "see [URL].")
+
+    def test_url_does_not_eat_trailing_comma(self):
+        r = self._make()
+        out = r._redact_text("see https://example.com, then reply")
+        self.assertEqual(out, "see [URL], then reply")
+
+    def test_url_does_not_eat_trailing_paren(self):
+        r = self._make()
+        out = r._redact_text("link (https://example.com)")
+        self.assertEqual(out, "link ([URL])")
+
 
 if __name__ == "__main__":
     unittest.main()

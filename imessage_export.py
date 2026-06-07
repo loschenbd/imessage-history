@@ -281,9 +281,9 @@ class Redactor:
     # Phone uses a negative lookbehind for word chars so a leading "+" at the
     # start of a token (e.g. "+15551234567" after a space) matches cleanly —
     # \b doesn't sit between a non-word space and the non-word "+".
-    _PHONE_RE = re.compile(r"(?<!\w)\+?\d[\d\-\s().]{7,}\b")
+    _PHONE_RE = re.compile(r"(?<!\w)\+?\d[\d\-().]{6,}\d(?!\w)")
     _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
-    _URL_RE   = re.compile(r"https?://\S+")
+    _URL_RE   = re.compile(r"https?://[^\s<>\"'`]+?(?=[.,;!?)\]\}>]*(?:\s|$))")
 
     def _ordered_aliases(self) -> list[str]:
         """Aliases ordered longest-first so 'Alice Smith' wins over 'Alice'."""
