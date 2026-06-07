@@ -214,6 +214,20 @@ class RedactionEndToEndTests(EndToEndExportTests):
         pmap = out / "pseudonym_map.json"
         self.assertEqual(pmap.stat().st_mode & 0o777, 0o600)
 
+    def test_redact_only_folder_safe_for_unsanitized_label(self):
+        """If chat_label() ever returns something with path metacharacters,
+        --redact-only must still produce a safe folder name."""
+        # Patch redactor.chat_label to return a malicious string.
+        from unittest.mock import patch
+        with patch.object(ie.Redactor, "chat_label", lambda self: "../etc/passwd"):
+            self._redacted_run(extra=["--redact-only"])
+        contacts = list(self.out_dir.iterdir())
+        self.assertEqual(len(contacts), 1)
+        name = contacts[0].name
+        # Must not contain a literal slash and must not start with ".."
+        self.assertNotIn("/", name)
+        self.assertFalse(name.startswith(".."))
+
 
 if __name__ == "__main__":
     unittest.main()

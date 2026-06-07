@@ -1300,7 +1300,17 @@ def _run(args, conn) -> int:
     if args.redact_only and redactor is not None:
         chat_ids_str = ",".join(str(c) for c in metadata["chat_ids"])
         chash = hashlib.sha1(chat_ids_str.encode()).hexdigest()[:4]
-        folder_name = f"{redactor.chat_label()}-{chash}"
+        base = redactor.chat_label()
+        # Permit "Person X" verbatim (1:1 chat with one pseudonym). Permit
+        # "Person A+Person B+..." (group with joined pseudonyms). Otherwise
+        # — e.g., a raw group display_name slipped through — slugify for
+        # filesystem safety, and strip leading dots so traversal-style
+        # prefixes ("../") can't survive as a leading "..-" segment.
+        if not re.match(r"^Person [A-Z]+(\+Person [A-Z]+)*$", base):
+            base = slugify(base).lstrip(".")
+            if not base:
+                base = "chat"
+        folder_name = f"{base}-{chash}"
     else:
         folder_name = slugify(chat_label(metadata))
     out_dir = Path(args.output_dir) / folder_name / date_str
