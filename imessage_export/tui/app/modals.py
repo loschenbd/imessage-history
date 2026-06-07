@@ -336,7 +336,7 @@ class HelpModal(ModalScreen[None]):
         align: center middle;
     }
     HelpModal > Vertical {
-        width: 60;
+        width: 76;
         padding: 1 2;
         border: thick $primary;
         background: $surface;
