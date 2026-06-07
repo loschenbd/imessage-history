@@ -157,13 +157,22 @@ class ImessageExportApp(App):
 
     @work(thread=True, exclusive=True)
     def _load_history_worker(self, chat_id: int) -> None:
+        from ...db import open_db
         from .workers import load_chat_messages
-        messages = load_chat_messages(
-            self.conn,
-            chat_id=chat_id,
-            contacts=self.state.contacts,
-            me_name=self.state.me_name,
-        )
+        # Open a per-call read-only connection so a slow load (e.g. a 70k
+        # chat) doesn't hold the shared self.conn lock and stall the next
+        # chat click. exclusive=True still discards the previous worker's
+        # result via the chat_id check in on_history_loaded.
+        worker_conn = open_db(DEFAULT_DB)
+        try:
+            messages = load_chat_messages(
+                worker_conn,
+                chat_id=chat_id,
+                contacts=self.state.contacts,
+                me_name=self.state.me_name,
+            )
+        finally:
+            worker_conn.close()
         self.post_message(HistoryLoaded(chat_id, messages))
 
     def on_history_loaded(self, event: HistoryLoaded) -> None:
