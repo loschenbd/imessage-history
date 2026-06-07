@@ -138,7 +138,7 @@ class EndToEndExportTests(unittest.TestCase):
         j = json.loads((out / "conversation.json").read_text())
         md = j["metadata"]
         self.assertEqual(md["me_name"], "Tester")
-        self.assertEqual(md["message_count"], 5)
+        self.assertEqual(md["message_count"], 7)
         self.assertEqual(len(md["participants"]), 1)
         self.assertEqual(md["participants"][0]["handle"], "+15551234567")
 

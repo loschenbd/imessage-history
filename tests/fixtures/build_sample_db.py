@@ -56,6 +56,8 @@ def build(path: Path) -> None:
         - rid 3: Alice attributedBody-only, length 200        (long incoming)
         - rid 4: Me    tapback Loved → rid 1                  (reaction)
         - rid 5: Me    edited message                         (date_edited != 0)
+        - rid 6: Alice "Carol said..."                        (third-party name only)
+        - rid 7: Me    phone + email + URL                    (PII regex bait)
     """
     if path.exists():
         path.unlink()
@@ -171,6 +173,24 @@ def build(path: Path) -> None:
         rid=5, offset_sec=120,
         text="I edited this one.", body=None,
         is_from_me=1, edited=to_apple_ns(base.replace(minute=base.minute + 3)),
+    )
+    # rid 6 — Alice incoming, mentions a third party ("Carol") by name only.
+    #         Carol is not in any handle row. Used by --suggest-names tests
+    #         and by tests that verify body-text names get redacted only when
+    #         supplied via --redact-names-file.
+    insert_message(
+        rid=6, offset_sec=150,
+        text="Carol said she'd be here by 7. Carol is bringing dessert.",
+        body=None,
+        is_from_me=0,
+    )
+    # rid 7 — Me outgoing, body contains a phone, an email, and a URL.
+    #         Used by tests that verify PII regex redaction.
+    insert_message(
+        rid=7, offset_sec=180,
+        text="Hit me at +15557654321 or alice@example.com — see https://example.com/page?x=1",
+        body=None,
+        is_from_me=1,
     )
 
     conn.commit()
