@@ -15,7 +15,9 @@ from imessage_export.contacts_macos import _normalize_handle, _normalize_phone, 
 class NormalizeTests(unittest.TestCase):
     def test_phone_strip_punctuation(self):
         self.assertEqual(_normalize_phone("+1 (555) 123-4567"), "+15551234567")
-        self.assertEqual(_normalize_phone("(555) 123 4567"), "5551234567")
+        # 10-digit US numbers gain a "+1" prefix so they match how iMessage
+        # stores handles (E.164 with country code).
+        self.assertEqual(_normalize_phone("(555) 123 4567"), "+15551234567")
         self.assertEqual(_normalize_phone("+44.20.7946.0958"), "+442079460958")
 
     def test_email_lowercased(self):

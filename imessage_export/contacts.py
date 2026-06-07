@@ -21,9 +21,15 @@ def normalize_handle(h: str) -> str:
     # Email: lower-case
     if "@" in h:
         return h.lower()
-    # Phone: keep digits, prepend '+' if it had one
+    # Phone: keep digits. macOS Contacts often stores US numbers as 10
+    # digits (no country code) while iMessage always uses E.164 with +1.
+    # Bridge them by canonicalizing 10-digit numbers to "+1XXXXXXXXXX".
     digits = re.sub(r"\D", "", h)
-    return ("+" + digits) if digits else h
+    if not digits:
+        return h
+    if len(digits) == 10:
+        digits = "1" + digits
+    return "+" + digits
 
 
 def load_contacts(path: Optional[Path]) -> dict[str, str]:
