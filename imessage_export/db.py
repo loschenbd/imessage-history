@@ -26,7 +26,8 @@ def open_db(path: Path) -> sqlite3.Connection:
         raise SystemExit(f"chat.db not found at {path}")
     uri = f"file:{path}?mode=ro&immutable=1"
     try:
-        conn = sqlite3.connect(uri, uri=True)
+        # Workers share this conn; the underlying ro+immutable connection is safe across threads.
+        conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
     except sqlite3.OperationalError as e:
         raise SystemExit(
             f"Cannot open {path}: {e}\n"

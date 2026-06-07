@@ -6,7 +6,6 @@ sidebar click to export completion.
 """
 from __future__ import annotations
 
-import sqlite3
 import sys
 import tempfile
 import unittest
@@ -16,22 +15,6 @@ from unittest import mock
 # Make the fixtures importable without packaging.
 sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures"))
 from build_sample_db import build  # noqa: E402
-
-
-def _open_db_threadsafe(path: Path) -> sqlite3.Connection:
-    """Thin wrapper around open_db that sets check_same_thread=False.
-
-    Textual's `@work(thread=True)` hands self.conn to a worker thread.
-    The real chat.db opens with `mode=ro&immutable=1` (URI-mode, read-only)
-    so multi-thread safety is fine in practice; SQLite's default thread check
-    just rejects the cross-thread usage. This helper re-opens with the same
-    read-only URI flags but without the thread guard so the Pilot test works.
-    """
-    uri = f"file:{path}?mode=ro&immutable=1"
-    conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
-    conn.execute("PRAGMA query_only = ON")
-    conn.row_factory = sqlite3.Row
-    return conn
 
 
 class TestAppSmoke(unittest.IsolatedAsyncioTestCase):
@@ -46,18 +29,12 @@ class TestAppSmoke(unittest.IsolatedAsyncioTestCase):
         # the real ~/.config/imessage-export.
         # Also mock _offer_contacts_scan to prevent the ContactsScanModal from
         # being pushed during the test (no real contacts on disk).
-        # Patch open_db to use check_same_thread=False so the @work(thread=True)
-        # worker can share the connection that was created on the main thread.
         defaults_path = Path(tmpdir.name) / "recent.json"
         with mock.patch("imessage_export.tui.app.app.DEFAULT_DB", db_path), \
              mock.patch("imessage_export.tui.defaults.DEFAULT_PATH", defaults_path), \
              mock.patch(
                  "imessage_export.tui.app.app.ImessageExportApp._offer_contacts_scan",
                  return_value=None,
-             ), \
-             mock.patch(
-                 "imessage_export.tui.app.app.open_db",
-                 side_effect=_open_db_threadsafe,
              ):
 
             from imessage_export.tui.app.app import ImessageExportApp
