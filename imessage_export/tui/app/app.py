@@ -8,14 +8,23 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from textual import work
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal
+from textual.message import Message as TextualMessage
 
 from ...cli import DEFAULT_DB
-from ...db import chat_info, list_recent_chats, open_db
+from ...db import list_recent_chats, open_db
 from ..defaults import Defaults, load as load_defaults
 from .state import AppState
 from .widgets import HistoryView, Sidebar
+
+
+class HistoryLoaded(TextualMessage):
+    def __init__(self, chat_id: int, messages: list) -> None:
+        super().__init__()
+        self.chat_id = chat_id
+        self.messages = messages
 
 
 class ImessageExportApp(App):
@@ -60,11 +69,9 @@ class ImessageExportApp(App):
         self.state.chats = [dict(r) for r in list_recent_chats(self.conn, 100)]
 
         sidebar = self.query_one(Sidebar)
-        # Rebuild with real chats.
         sidebar._all_chats = self.state.chats
         sidebar._refresh_list("")
 
-        # Pre-select last-used chat if possible.
         last = self._defaults.last_chat_id
         if last and any(c.get("chat_id") == last for c in self.state.chats):
             sidebar.select_chat_id(last)
@@ -76,4 +83,28 @@ class ImessageExportApp(App):
 
     def on_sidebar_chat_selected(self, event: Sidebar.ChatSelected) -> None:
         self.state.selected_chat_id = event.chat_id
-        # Real history load arrives in Task 6.
+        self.state.history_loading = True
+        history = self.query_one(HistoryView)
+        history.show_loading()
+        self._load_history_worker(event.chat_id)
+
+    @work(thread=True, exclusive=True)
+    def _load_history_worker(self, chat_id: int) -> None:
+        from .workers import load_chat_messages
+        messages = load_chat_messages(
+            self.conn,
+            chat_id=chat_id,
+            contacts=self.state.contacts,
+            me_name=self.state.me_name,
+        )
+        self.post_message(HistoryLoaded(chat_id, messages))
+
+    def on_history_loaded(self, event: HistoryLoaded) -> None:
+        if event.chat_id != self.state.selected_chat_id:
+            return
+        self.state.selected_chat_messages = [
+            {"message_id": m.message_id, "timestamp": m.timestamp} for m in event.messages
+        ]
+        self.state.history_loading = False
+        history = self.query_one(HistoryView)
+        history.render_messages(event.messages)

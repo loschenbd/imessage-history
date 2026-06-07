@@ -4,11 +4,14 @@ HistoryView, StatusLine, ActionBar are filled in by Tasks 6 / 7 / 13.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Iterable
 
+from rich.text import Text
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Vertical, VerticalScroll
 from textual.message import Message as TextualMessage
+from textual.widget import Widget
 from textual.widgets import Input, ListItem, ListView, Label, Static
 
 
@@ -84,14 +87,77 @@ class Sidebar(Vertical):
                 break
 
 
-class HistoryView(Vertical):
-    """Placeholder — Task 6 adds the real rendering."""
+class HistoryView(VerticalScroll):
+    """Scrollable rendered chat history.
+
+    Renders messages with the same day-header convention used by the
+    Markdown writer: `── Saturday, June 6, 2026 ──` before the first
+    message of each calendar day. Speaker headers are bold.
+    """
 
     DEFAULT_CSS = """
     HistoryView {
         padding: 0 2;
     }
+    HistoryView > .day-header {
+        color: $accent;
+        text-style: bold;
+        padding: 1 0 0 0;
+    }
+    HistoryView > .message-row {
+        padding: 0;
+    }
+    HistoryView > .message-row.is-selected-endpoint {
+        background: $accent 30%;
+    }
+    HistoryView > .message-row.is-in-range {
+        background: $accent 15%;
+    }
+    HistoryView > #history-placeholder {
+        padding: 2 0;
+    }
     """
 
-    def compose(self) -> ComposeResult:
-        yield Static("Pick a chat from the left.", id="history-placeholder")
+    def __init__(self, *, id: str | None = None) -> None:
+        super().__init__(id=id)
+        self._placeholder_visible = True
+
+    def show_placeholder(self, text: str = "Pick a chat from the left.") -> None:
+        self.remove_children()
+        ph = Static(text, id="history-placeholder")
+        self.mount(ph)
+        self._placeholder_visible = True
+
+    def show_loading(self) -> None:
+        self.show_placeholder("Loading…")
+
+    def render_messages(self, messages: list) -> None:
+        """Render `messages` (list[Message]) into the pane."""
+        self.remove_children()
+        self._placeholder_visible = False
+        if not messages:
+            self.show_placeholder("No messages in this chat.")
+            return
+
+        last_date = None
+        for m in messages:
+            ts = m.timestamp  # "YYYY-MM-DD HH:MM:SS"
+            day = ts[:10]
+            if day != last_date:
+                dt = datetime.strptime(day, "%Y-%m-%d")
+                header = f"── {dt.strftime('%A, %B %-d, %Y')} ──"
+                self.mount(Static(header, classes="day-header"))
+                last_date = day
+            row = Static(self._format_row(m), classes="message-row")
+            row.data_msg_id = m.message_id  # type: ignore[attr-defined]
+            self.mount(row)
+
+    def _format_row(self, m) -> Text:
+        ts = m.timestamp[11:19]  # HH:MM:SS
+        speaker = m.author_label or ""
+        body = (m.text or "").replace("\n", "\n          ")
+        text = Text()
+        text.append(f"[{ts}] ", style="dim")
+        text.append(f"{speaker}: ", style="bold")
+        text.append(body)
+        return text
