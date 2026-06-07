@@ -14,6 +14,8 @@ from textual.message import Message as TextualMessage
 from textual.widget import Widget
 from textual.widgets import Input, ListItem, ListView, Label, Static
 
+from .state import filter_messages_by_query
+
 
 class Sidebar(Vertical):
     """Filter input + scrollable chat list."""
@@ -136,27 +138,18 @@ class HistoryView(VerticalScroll):
         self.show_placeholder("Loading…")
 
     def render_messages(self, messages: list) -> None:
-        """Render `messages` (list[Message]) into the pane."""
+        """Render `messages` (list[Message]) into the pane.
+
+        Full reset: removes any stale search Input from a prior chat, updates
+        the message cache, and renders rows (or shows the empty-chat placeholder).
+        """
         self._all_messages = list(messages)
         self.remove_children()
         self._placeholder_visible = False
         if not messages:
             self.show_placeholder("No messages in this chat.")
             return
-
-        last_date = None
-        for m in messages:
-            ts = m.timestamp  # "YYYY-MM-DD HH:MM:SS"
-            day = ts[:10]
-            if day != last_date:
-                dt = datetime.strptime(day, "%Y-%m-%d")
-                header = f"── {dt.strftime('%A, %B %-d, %Y')} ──"
-                self.mount(Static(header, classes="day-header"))
-                last_date = day
-            row = Static(self._format_row(m), classes="message-row")
-            row.can_focus = True
-            row.data_msg_id = m.message_id  # type: ignore[attr-defined]
-            self.mount(row)
+        self._render_rows(messages)
 
     def _format_row(self, m) -> Text:
         ts = m.timestamp[11:19]  # HH:MM:SS
@@ -255,30 +248,28 @@ class HistoryView(VerticalScroll):
 
     def apply_search(self, query: str) -> None:
         """Re-render the pane filtered to messages matching `query`."""
-        from .state import filter_messages_by_query
         self.app.state.history_search_query = query or None
-        filtered = filter_messages_by_query(self._all_messages, query)
-        full = self._all_messages
-        self._render_rows(filtered)
-        self._all_messages = full
+        self._render_rows(filter_messages_by_query(self._all_messages, query))
 
     def close_search(self) -> None:
         """Remove the search input and restore the unfiltered view."""
         for s in self.query("#history-search"):
             s.remove()
         self.app.state.history_search_query = None
-        cache = list(self._all_messages)
-        self._render_rows(cache)
-        self._all_messages = cache
+        self._render_rows(self._all_messages)
 
     def _render_rows(self, messages: list) -> None:
-        """Re-render only the row/header children, preserving #history-search."""
-        # Remove rendered content but keep the search input (if mounted).
+        """Re-render only the row/header children, preserving #history-search.
+
+        Caller-managed: does NOT touch `self._all_messages`. Use `render_messages`
+        when you want a full reset that also drops the search bar and refreshes
+        the cache.
+        """
         self.remove_children(".message-row, .day-header, #history-placeholder")
         self._placeholder_visible = False
         if not messages:
-            ph = Static("No matches.", id="history-placeholder")
-            self.mount(ph)
+            placeholder = "No matches." if self.app.state.history_search_query else "No messages in this chat."
+            self.mount(Static(placeholder, id="history-placeholder"))
             self._placeholder_visible = True
             return
         last_date = None
