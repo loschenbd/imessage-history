@@ -131,6 +131,20 @@ def _parse_local_ts(ts: str) -> Optional[datetime]:
         return None
 
 
+def format_short_time(ts: str) -> str:
+    """Natural 12-hour clock label, matching Messages.app conventions.
+
+    '09:37:00' → '9:37 AM', '21:37:00' → '9:37 PM', '00:00:00' → '12:00 AM',
+    '12:00:00' → '12:00 PM'. Falls back to the raw time-part if parsing
+    fails (so malformed timestamps still render something)."""
+    dt = _parse_local_ts(ts)
+    if dt is None:
+        return ts.split(" ", 1)[1] if " " in ts else ts
+    hour12 = dt.hour % 12 or 12
+    suffix = "AM" if dt.hour < 12 else "PM"
+    return f"{hour12}:{dt.minute:02d} {suffix}"
+
+
 def iter_render_events(messages):
     """Walk messages and emit ('day', dt) / ('gap', seconds) / ('msg', m).
 
@@ -339,7 +353,7 @@ def write_markdown(path: Path, messages: list[Message], metadata: dict):
                 f.write(f"_── {format_gap(event[1])} ──_\n\n")
                 continue
             m = event[1]
-            time_str = m.timestamp.split(" ", 1)[1] if " " in m.timestamp else m.timestamp
+            time_str = format_short_time(m.timestamp)
             f.write(f"**{time_str} · {m.author_label}**")
             if m.is_edited and m.kind == "message":
                 f.write(" _(edited)_")

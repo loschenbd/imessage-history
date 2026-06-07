@@ -298,11 +298,25 @@ class WriteMarkdownTests(unittest.TestCase):
         out = self._write([m])
         self.assertIn("## Saturday, June 6, 2026", out)
 
-    def test_per_message_header_drops_date(self):
+    def test_per_message_header_uses_natural_time(self):
         m = Stub(timestamp="2026-06-06 09:00:00", author_label="Ben", text="hi")
         out = self._write([m])
-        self.assertIn("**09:00:00 · Ben**", out)
+        self.assertIn("**9:00 AM · Ben**", out)
         self.assertNotIn("**2026-06-06 09:00:00 · Ben**", out)
+        self.assertNotIn("**09:00:00 · Ben**", out)
+
+    def test_per_message_header_pm_and_midnight(self):
+        m_pm = Stub(timestamp="2026-06-06 21:37:00", author_label="Mallory", text="hi")
+        m_noon = Stub(timestamp="2026-06-06 12:00:00", author_label="Mallory", text="noon")
+        m_midnight = Stub(timestamp="2026-06-07 00:00:00", author_label="Mallory", text="late")
+        out = self._write([m_pm, m_noon, m_midnight], meta={
+            **self.META,
+            "message_count": 3,
+            "actual_last_local": "2026-06-07 00:00:00",
+        })
+        self.assertIn("**9:37 PM · Mallory**", out)
+        self.assertIn("**12:00 PM · Mallory**", out)
+        self.assertIn("**12:00 AM · Mallory**", out)
 
     def test_empty_edited_renders_placeholder(self):
         m = Stub(timestamp="2026-06-06 09:00:00", author_label="Mallory",
