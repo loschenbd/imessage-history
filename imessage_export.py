@@ -773,6 +773,79 @@ def write_json(path: Path, messages: list[Message], metadata: dict):
         json.dump(payload, f, indent=2, ensure_ascii=False)
 
 
+# ---------------------------------------------------------------------------
+# Day / gap rendering helpers (used by .txt, _ai_ready.txt, .md)
+# ---------------------------------------------------------------------------
+
+GAP_THRESHOLD_SECONDS = 30 * 60
+
+
+def format_day_label(dt: datetime) -> str:
+    """Human-readable day label, e.g. 'Saturday, June 6, 2026'.
+
+    Uses string concatenation around %A / %B / %Y to avoid relying on
+    the %-d strftime token (GNU extension; not portable to Windows libc).
+    """
+    return dt.strftime("%A, %B ") + str(dt.day) + dt.strftime(", %Y")
+
+
+def format_gap(seconds: int) -> str:
+    """Human label for a silence between two messages.
+
+    '45 min later' / '1h later' / '2h 15min later' / '1 day later' /
+    '3 days later'. Negative inputs clamp to 0 (defensive — should never
+    happen because messages are read ORDER BY date ASC).
+    """
+    if seconds < 0:
+        seconds = 0
+    days = seconds // 86400
+    if days >= 1:
+        return f"{days} day{'s' if days != 1 else ''} later"
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    if hours >= 1:
+        return f"{hours}h later" if minutes == 0 else f"{hours}h {minutes}min later"
+    return f"{minutes} min later"
+
+
+def _parse_local_ts(ts: str) -> Optional[datetime]:
+    """Parse the writer-side 'YYYY-MM-DD HH:MM:SS' local timestamp string.
+    Returns None for anything that doesn't match — callers fall back to
+    yielding the message verbatim with no day/gap framing."""
+    try:
+        return datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+    except (ValueError, TypeError):
+        return None
+
+
+def iter_render_events(messages):
+    """Walk messages and emit ('day', dt) / ('gap', seconds) / ('msg', m).
+
+    - 'day' fires every time the calendar date changes, including before
+      the very first message.
+    - 'gap' fires only when the prior message is on the SAME calendar day
+      AND (current - prior) >= GAP_THRESHOLD_SECONDS, so we never emit
+      a gap marker right after a day header.
+    """
+    prev_dt = None
+    prev_date = None
+    for m in messages:
+        dt = _parse_local_ts(m.timestamp)
+        if dt is None:
+            yield ("msg", m)
+            continue
+        date = dt.date()
+        if date != prev_date:
+            yield ("day", dt)
+            prev_date = date
+        elif prev_dt is not None:
+            delta = int((dt - prev_dt).total_seconds())
+            if delta >= GAP_THRESHOLD_SECONDS:
+                yield ("gap", delta)
+        yield ("msg", m)
+        prev_dt = dt
+
+
 def format_message_body(m: Message) -> str:
     """The body portion of a rendered message (without the [time] author: prefix).
 
