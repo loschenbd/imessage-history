@@ -263,3 +263,55 @@ class ExportConfirmModal(ModalScreen[bool]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss(event.button.id == "run")
+
+
+class ContactsScanModal(ModalScreen[Optional[Path]]):
+    """First-run scan offer. Dismisses with the written CSV path or None."""
+
+    DEFAULT_CSS = """
+    ContactsScanModal {
+        align: center middle;
+    }
+    ContactsScanModal > Vertical {
+        width: 64;
+        padding: 1 2;
+        border: thick $primary;
+        background: $surface;
+    }
+    """
+
+    BINDINGS = [("escape", "dismiss_none", "Skip")]
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static("Set up contacts", classes="modal-title")
+            yield Static(
+                "No contacts file found. You can populate one in seconds\n"
+                "by scanning macOS Contacts. First scan triggers a one-time\n"
+                "Contacts permission prompt."
+            )
+            with Horizontal():
+                yield Button("Skip", id="skip")
+                yield Button("Scan now", id="scan", variant="primary")
+
+    def action_dismiss_none(self) -> None:
+        self.dismiss(None)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "skip":
+            self.dismiss(None)
+            return
+        target = Path.cwd() / "contacts.csv"
+        from ...contacts_macos import fetch_contacts, write_csv
+        try:
+            rows = fetch_contacts()
+        except RuntimeError as exc:
+            self.app.notify(f"Could not read Contacts: {exc}", severity="warning")
+            self.dismiss(None)
+            return
+        if not rows:
+            self.app.notify("No contacts found in Contacts.app.", severity="warning")
+            self.dismiss(None)
+            return
+        write_csv(rows, target)
+        self.dismiss(target)

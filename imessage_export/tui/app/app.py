@@ -83,6 +83,33 @@ class ImessageExportApp(App):
         if last and any(c.get("chat_id") == last for c in self.state.chats):
             sidebar.select_chat_id(last)
 
+        # Offer to scan Contacts.app if we have no source.
+        has_contacts_file = (
+            (self.state.contacts_path and self.state.contacts_path.exists())
+            or (Path.cwd() / "contacts.csv").exists()
+        )
+        if not has_contacts_file:
+            self.call_later(self._offer_contacts_scan)
+        else:
+            self._load_contacts_into_state()
+
+    def _load_contacts_into_state(self) -> None:
+        from ...contacts import load_contacts
+        path = self.state.contacts_path or (Path.cwd() / "contacts.csv")
+        if path and Path(path).exists():
+            try:
+                self.state.contacts = load_contacts(Path(path))
+            except Exception:
+                self.state.contacts = {}
+
+    async def _offer_contacts_scan(self) -> None:
+        from .modals import ContactsScanModal
+        result = await self.push_screen_wait(ContactsScanModal())
+        if result is not None:
+            self.state.contacts_path = result
+            self._load_contacts_into_state()
+            self._persist_defaults()
+
     def on_unmount(self) -> None:
         if self.conn is not None:
             self.conn.close()
