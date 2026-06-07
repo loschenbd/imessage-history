@@ -150,5 +150,27 @@ class GetConsoleTests(unittest.TestCase):
         self.assertIs(c1, c2)
 
 
+class RegisterTextualThemesTests(unittest.TestCase):
+    def test_register_textual_themes_idempotent(self):
+        """Re-registering must not raise — on_mount can run twice in tests."""
+        from imessage_export.tui import theme
+
+        class _FakeApp:
+            def __init__(self):
+                self._registered: list[str] = []
+
+            def register_theme(self, t):
+                if t.name in self._registered:
+                    raise ValueError(f"theme {t.name!r} already registered")
+                self._registered.append(t.name)
+
+        app = _FakeApp()
+        theme.register_textual_themes(app)
+        # Second call must not raise.
+        theme.register_textual_themes(app)
+        self.assertIn("dawnfox", app._registered)
+        self.assertIn("terafox", app._registered)
+
+
 if __name__ == "__main__":
     unittest.main()

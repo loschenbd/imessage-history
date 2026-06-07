@@ -41,12 +41,22 @@ class ImessageExportApp(App):
     """Default interactive surface for `imessage-export` on a TTY."""
 
     CSS = """
-    Screen {
-        layout: vertical;
-    }
-    #main {
-        height: 1fr;
-    }
+    Screen { layout: vertical; background: $background; color: $foreground; }
+    #main { height: 1fr; }
+
+    Sidebar { background: $surface; border-right: solid $panel; }
+    Sidebar > .selected { background: $panel; color: $primary; text-style: bold; }
+
+    HistoryView { background: $background; color: $foreground; }
+    HistoryView .day-header { color: $day-header; text-style: bold; }
+    HistoryView .gap-marker { color: $muted; text-style: italic; }
+    HistoryView .speaker-other { color: $primary; text-style: bold; }
+    HistoryView .speaker-me    { color: $accent;  text-style: bold; }
+    HistoryView .timestamp     { color: $muted; }
+
+    StatusLine { background: $surface; color: $foreground; }
+    ActionBar  { background: $panel;   color: $foreground; }
+    ActionBar .key { color: $primary; text-style: bold; }
     """
 
     TITLE = "imessage-export"
@@ -68,6 +78,18 @@ class ImessageExportApp(App):
         self.state = AppState()
         self.conn = None
         self._defaults: Defaults | None = None
+        # Register themes AND set the active theme early: App.CSS references
+        # custom variables ($day-header etc.) at stylesheet-parse time, which
+        # happens before on_mount runs. We re-resolve the theme in on_mount
+        # so persisted/env/CLI sources can override the __init__ guess.
+        import os
+        from ..theme import register_textual_themes, resolve_theme_name
+        register_textual_themes(self)
+        self.theme = resolve_theme_name(
+            cli=getattr(self, "_cli_theme", None),
+            env=os.environ.get("IMESSAGE_EXPORT_THEME"),
+            persisted=None,  # defaults aren't loaded yet; on_mount re-resolves
+        )
 
     def compose(self) -> ComposeResult:
         from .widgets import ActionBar, StatusLine
@@ -80,7 +102,16 @@ class ImessageExportApp(App):
         yield ActionBar(id="action-bar")
 
     def on_mount(self) -> None:
+        import os
+        from ..theme import register_textual_themes, resolve_theme_name
+
         self._defaults = load_defaults()
+        register_textual_themes(self)
+        self.theme = resolve_theme_name(
+            cli=getattr(self, "_cli_theme", None),
+            env=os.environ.get("IMESSAGE_EXPORT_THEME"),
+            persisted=self._defaults.theme_override,
+        )
         self.state.contacts_path = (
             Path(self._defaults.contacts_path) if self._defaults.contacts_path else None
         )
