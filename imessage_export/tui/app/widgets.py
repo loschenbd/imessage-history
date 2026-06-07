@@ -41,6 +41,12 @@ class Sidebar(Vertical):
         super().__init__(id=id)
         self._all_chats = list(chats)
         self._contacts = contacts
+        # Suppress Highlighted-driven auto-load until the app is past
+        # its on_mount() bootstrap. Otherwise the initial _refresh_list
+        # (which sets index=0) races with the explicit
+        # select_chat_id(last_chat_id) and triggers two show_loading()
+        # calls back-to-back, which collide on the placeholder widget id.
+        self._suppress_highlight_load = True
 
     def compose(self) -> ComposeResult:
         yield Input(placeholder="Filter…", id="sidebar-filter")
@@ -76,6 +82,25 @@ class Sidebar(Vertical):
         chat_id = getattr(event.item, "data", None)
         if chat_id is not None:
             self.post_message(self.ChatSelected(chat_id))
+
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        # Auto-load the highlighted chat. Without this, arrow-key nav just
+        # moved the highlight without ever firing ChatSelected, so the
+        # preview pane sat on "Loading…" (or the previous chat) until the
+        # user remembered to press Enter.
+        if self._suppress_highlight_load:
+            return
+        item = event.item
+        if item is None:
+            return
+        chat_id = getattr(item, "data", None)
+        if chat_id is not None:
+            self.post_message(self.ChatSelected(chat_id))
+
+    def enable_highlight_autoload(self) -> None:
+        """Called by the app after on_mount finishes wiring up the initial
+        chat selection. Subsequent arrow-key highlights will auto-load."""
+        self._suppress_highlight_load = False
 
     def select_chat_id(self, chat_id: int) -> None:
         """Highlight the row whose chat_id matches (used for first-run pre-select)."""
@@ -113,7 +138,7 @@ class HistoryView(VerticalScroll):
     HistoryView > .message-row.is-in-range {
         background: $accent 15%;
     }
-    HistoryView > #history-placeholder {
+    HistoryView > .history-placeholder {
         padding: 2 0;
     }
     """
@@ -124,7 +149,11 @@ class HistoryView(VerticalScroll):
 
     def show_placeholder(self, text: str = "Pick a chat from the left.") -> None:
         self.remove_children()
-        ph = Static(text, id="history-placeholder")
+        # Use a class instead of an id so that calling show_placeholder
+        # twice in quick succession (remove_children is async; the prior
+        # widget may still be in the node tree) doesn't collide on a
+        # duplicate id.
+        ph = Static(text, classes="history-placeholder")
         self.mount(ph)
         self._placeholder_visible = True
 
