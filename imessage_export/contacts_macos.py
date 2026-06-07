@@ -1,83 +1,126 @@
-"""Read macOS Contacts.app via osascript and write a handle,name CSV.
+"""Read macOS Contacts from the AddressBook SQLite stores and write a
+handle,name CSV.
 
-Triggers a one-time TCC permission prompt the first time it runs.
-After the user clicks 'OK', subsequent runs are silent.
+macOS keeps each Contacts source (iCloud, on-this-Mac, Google, Exchange...)
+in its own SQLite file at:
+    ~/Library/Application Support/AddressBook/Sources/<UUID>/AddressBook-v22.abcddb
+
+The directory is FDA-protected, so the user's existing Full Disk Access
+grant (the one that lets us read chat.db) covers this too. Read-only mode
+is enforced the same way: `mode=ro&immutable=1` URI flags.
+
+The previous AppleScript-based reader timed out on ~2000-contact address
+books because every property access is an Apple Event roundtrip. Direct
+SQLite reads finish in milliseconds.
 """
 from __future__ import annotations
 
 import csv
+import os
 import re
-import subprocess
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Iterable
 
-# AppleScript that walks every person and yields their phones + emails.
-# Output format: one record per line, "value\tname".
-_OSASCRIPT = r"""
-tell application "Contacts"
-    set output to ""
-    repeat with p in (every person)
-        set fullName to ""
-        try
-            set fullName to name of p
-        end try
-        if fullName is missing value then set fullName to ""
-        try
-            repeat with ph in (every phone of p)
-                try
-                    set v to value of ph
-                    if v is not missing value then
-                        set output to output & v & tab & fullName & linefeed
-                    end if
-                end try
-            end repeat
-        end try
-        try
-            repeat with em in (every email of p)
-                try
-                    set v to value of em
-                    if v is not missing value then
-                        set output to output & v & tab & fullName & linefeed
-                    end if
-                end try
-            end repeat
-        end try
-    end repeat
-    return output
-end tell
-"""
+ADDRESSBOOK_DIR = (
+    Path.home() / "Library" / "Application Support" / "AddressBook" / "Sources"
+)
+
+
+def _addressbook_dbs() -> list[Path]:
+    """Return every AddressBook-v22.abcddb under the user's Sources folder."""
+    if not ADDRESSBOOK_DIR.exists():
+        return []
+    return sorted(ADDRESSBOOK_DIR.glob("*/AddressBook-v22.abcddb"))
+
+
+def _open_ro(path: Path) -> sqlite3.Connection:
+    """Open a SQLite file read-only with the same hardening we use for chat.db."""
+    uri = f"file:{path}?mode=ro&immutable=1"
+    conn = sqlite3.connect(uri, uri=True)
+    conn.execute("PRAGMA query_only = ON")
+    return conn
+
+
+def _person_name(first: str | None, last: str | None,
+                 organization: str | None, nickname: str | None) -> str:
+    """Compose a display name from the available ZABCDRECORD columns."""
+    first = (first or "").strip()
+    last = (last or "").strip()
+    full = (first + " " + last).strip()
+    if full:
+        return full
+    if nickname:
+        return nickname.strip()
+    if organization:
+        return organization.strip()
+    return ""
 
 
 def fetch_contacts() -> list[tuple[str, str]]:
-    """Return [(handle, name), ...]. Raises RuntimeError on osascript failure."""
-    try:
-        result = subprocess.run(
-            ["osascript", "-e", _OSASCRIPT],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-    except FileNotFoundError:
-        raise RuntimeError("osascript not found — this command only works on macOS.")
-    except subprocess.TimeoutExpired:
-        raise RuntimeError("Reading Contacts timed out after 60s.")
+    """Return [(handle, name), ...] from every AddressBook source. Each phone /
+    email yields one row; the writer dedupes on normalized handle later.
 
-    if result.returncode != 0:
-        stderr = result.stderr.strip()
-        if "not allowed assistive access" in stderr or "Not authorized" in stderr:
-            raise RuntimeError(
-                "Contacts access denied. Grant in System Settings ▸ "
-                "Privacy & Security ▸ Contacts, then re-run."
-            )
-        raise RuntimeError(f"osascript failed: {stderr or result.stdout}")
+    Raises RuntimeError if no AddressBook stores are accessible (usually FDA).
+    """
+    dbs = _addressbook_dbs()
+    if not dbs:
+        raise RuntimeError(
+            f"No AddressBook stores found under {ADDRESSBOOK_DIR}. "
+            "Open Contacts.app once and ensure your terminal has Full Disk Access."
+        )
 
     rows: list[tuple[str, str]] = []
-    for line in result.stdout.splitlines():
-        if "\t" not in line:
+    errors: list[str] = []
+
+    for db in dbs:
+        try:
+            conn = _open_ro(db)
+        except sqlite3.OperationalError as e:
+            # Most common cause: terminal lacks Full Disk Access.
+            errors.append(f"{db.parent.name[:8]}: {e}")
             continue
-        handle, name = line.split("\t", 1)
-        rows.append((handle.strip(), name.strip()))
+        try:
+            try:
+                phone_rows = conn.execute("""
+                    select
+                        p.ZFULLNUMBER,
+                        r.ZFIRSTNAME, r.ZLASTNAME, r.ZORGANIZATION, r.ZNICKNAME
+                    from ZABCDPHONENUMBER p
+                    join ZABCDRECORD r on p.ZOWNER = r.Z_PK
+                    where p.ZFULLNUMBER is not null
+                """).fetchall()
+            except sqlite3.OperationalError:
+                phone_rows = []  # source has the table missing — skip cleanly
+            try:
+                email_rows = conn.execute("""
+                    select
+                        e.ZADDRESS,
+                        r.ZFIRSTNAME, r.ZLASTNAME, r.ZORGANIZATION, r.ZNICKNAME
+                    from ZABCDEMAILADDRESS e
+                    join ZABCDRECORD r on e.ZOWNER = r.Z_PK
+                    where e.ZADDRESS is not null
+                """).fetchall()
+            except sqlite3.OperationalError:
+                email_rows = []
+        finally:
+            conn.close()
+
+        for handle, first, last, org, nick in phone_rows + email_rows:
+            name = _person_name(first, last, org, nick)
+            if name:
+                rows.append((handle, name))
+
+    if not rows and errors:
+        raise RuntimeError(
+            "Could not read any AddressBook stores. Errors:\n  "
+            + "\n  ".join(errors)
+            + "\n\nMost likely cause: Full Disk Access not granted for this "
+              "terminal. System Settings ▸ Privacy & Security ▸ Full Disk "
+              "Access ▸ add your terminal app, then re-run."
+        )
+
     return rows
 
 
@@ -101,10 +144,8 @@ def _normalize_handle(raw: str) -> str:
 def write_csv(rows: Iterable[tuple[str, str]], path: Path) -> int:
     """Dedup, normalize, write `handle,name` CSV. Returns count written."""
     seen: dict[str, str] = {}
-    skipped = 0
     for raw_handle, name in rows:
         if not raw_handle or not name:
-            skipped += 1
             continue
         h = _normalize_handle(raw_handle)
         if not h or h in seen:
@@ -121,8 +162,8 @@ def write_csv(rows: Iterable[tuple[str, str]], path: Path) -> int:
 
 
 def build_contacts_csv(output_path: Path) -> int:
-    """End-to-end: fetch from Contacts.app, write CSV. Returns process exit code."""
-    print(f"Reading macOS Contacts… (first run may prompt for permission)", file=sys.stderr)
+    """End-to-end: fetch from AddressBook stores, write CSV. Returns exit code."""
+    print("Reading macOS Contacts (AddressBook SQLite)…", file=sys.stderr)
     try:
         rows = fetch_contacts()
     except RuntimeError as e:
@@ -130,7 +171,7 @@ def build_contacts_csv(output_path: Path) -> int:
         return 1
 
     if not rows:
-        print("No contacts found (Contacts.app appears empty).", file=sys.stderr)
+        print("No contacts found in any AddressBook store.", file=sys.stderr)
         return 1
 
     count = write_csv(rows, output_path)
