@@ -22,21 +22,24 @@ from pathlib import Path
 from typing import Optional
 
 import questionary
-from rich.console import Console
 from rich.panel import Panel
 
 from ..db import chat_info, list_recent_chats, open_db
 from .defaults import Defaults, load as load_defaults, save as save_defaults
 
-console = Console()
+# Themed Rich console; resolved lazily so headless paths never pay for Rich.
+from .theme import get_console as _get_console
+
+def _console():
+    return _get_console()
 
 TOTAL_STEPS = 7
 
 
 def _step_banner(n: int, label: str):
     """Print a subtle step indicator above each prompt."""
-    console.print(
-        f"\n[dim]──[/dim] [bold cyan]Step {n}/{TOTAL_STEPS}[/bold cyan]  "
+    _console().print(
+        f"\n[dim]──[/dim] [bold accent]Step {n}/{TOTAL_STEPS}[/bold accent]  "
         f"{label}  [dim]──[/dim]"
     )
 
@@ -86,7 +89,7 @@ def run() -> int:
             return 0
 
         if not _step_confirm(info, window, contacts, output_dir, me_name, redact_choices):
-            console.print("[dim]Cancelled.[/dim]")
+            _console().print("[dim]Cancelled.[/dim]")
             return 0
     finally:
         conn.close()
@@ -114,7 +117,7 @@ def run() -> int:
         conn.close()
 
     if rc == 0:
-        console.print("\n[bold green]✓[/bold green] Export complete.")
+        _console().print("\n[bold success]✓[/bold success] Export complete.")
         _maybe_show_preview(output_dir, info, window, redact_choices)
     return rc
 
@@ -125,16 +128,16 @@ def run() -> int:
 
 
 def _welcome():
-    console.print()
-    console.print(Panel(
-        "[bold cyan]imessage-export[/bold cyan]  [dim]·[/dim]  interactive mode\n\n"
+    _console().print()
+    _console().print(Panel(
+        "[bold accent]imessage-export[/bold accent]  [dim]·[/dim]  interactive mode\n\n"
         "Export a single conversation from your local Messages database\n"
         "into AI-ready files. [bold]Everything stays on this machine.[/bold]\n\n"
         "[dim]Press Ctrl+C at any prompt to cancel.\n"
         "Run with --help to see the headless flag surface.[/dim]",
         title="[bold]Welcome[/bold]",
         title_align="left",
-        border_style="cyan",
+        border_style="accent",
         padding=(1, 2),
     ))
 
@@ -142,15 +145,15 @@ def _welcome():
 def _step_offer_build_contacts() -> Optional[Path]:
     """Offer to scan macOS Contacts.app and write contacts.csv. Returns the
     written path on success, None if the user declines or the scan fails."""
-    console.print()
-    console.print(Panel(
-        "[yellow]No contacts file found.[/yellow]\n\n"
+    _console().print()
+    _console().print(Panel(
+        "[warning]No contacts file found.[/warning]\n\n"
         "You can populate one in seconds by scanning macOS Contacts.\n"
         "First scan triggers a one-time Contacts permission prompt.\n\n"
         "[dim]This writes [bold]contacts.csv[/bold] in the current directory.[/dim]",
         title="[bold]Set up contacts[/bold]",
         title_align="left",
-        border_style="yellow",
+        border_style="warning",
         padding=(1, 2),
     ))
     answer = questionary.confirm(
@@ -163,18 +166,18 @@ def _step_offer_build_contacts() -> Optional[Path]:
     target = Path.cwd() / "contacts.csv"
     from ..contacts_macos import fetch_contacts, write_csv
     try:
-        with console.status("[bold cyan]Reading Contacts.app… (up to 5 min on large books)[/bold cyan]", spinner="dots"):
+        with _console().status("[bold accent]Reading Contacts.app… (up to 5 min on large books)[/bold accent]", spinner="dots"):
             rows = fetch_contacts()
     except RuntimeError as e:
-        console.print(f"[red]Could not read Contacts:[/red] {e}")
+        _console().print(f"[error]Could not read Contacts:[/error] {e}")
         return None
 
     if not rows:
-        console.print("[yellow]No contacts found in Contacts.app — proceeding without.[/yellow]")
+        _console().print("[warning]No contacts found in Contacts.app — proceeding without.[/warning]")
         return None
 
     count = write_csv(rows, target)
-    console.print(f"[bold green]✓[/bold green] Wrote {count} contacts → [bold]{target}[/bold]")
+    _console().print(f"[bold success]✓[/bold success] Wrote {count} contacts → [bold]{target}[/bold]")
     return target
 
 
@@ -208,7 +211,7 @@ def _step_pick_chat(conn, defaults: Defaults, contacts: dict) -> tuple[Optional[
     # history, not just the most recent few hundred.
     rows = list_recent_chats(conn, None)
     if not rows:
-        console.print("[red]No chats found in chat.db.[/red]")
+        _console().print("[error]No chats found in chat.db.[/error]")
         return None, None
 
     choices = [
@@ -378,7 +381,7 @@ def _ask_time(label: str, example: str) -> Optional[str]:
         try:
             return parse_time_12h(raw)
         except ValueError:
-            console.print(f"[yellow]Didn't understand {raw!r} — try '9am' or '14:30'.[/yellow]")
+            _console().print(f"[warning]Didn't understand {raw!r} — try '9am' or '14:30'.[/warning]")
 
 
 def _step_contacts(defaults: Defaults) -> Optional[Path]:
@@ -394,7 +397,7 @@ def _step_contacts(defaults: Defaults) -> Optional[Path]:
         return None
     p = Path(raw).expanduser()
     if not p.exists():
-        console.print(f"[yellow]Note:[/yellow] {p} doesn't exist — proceeding without contacts.")
+        _console().print(f"[warning]Note:[/warning] {p} doesn't exist — proceeding without contacts.")
         return None
     return p
 
@@ -470,7 +473,7 @@ def _step_confirm(info: dict, window, contacts, output_dir, me_name, redact_choi
     msg_count = info.get("msg_count", 0)
 
     t = Table.grid(padding=(0, 2))
-    t.add_column(style="bold cyan", justify="right")
+    t.add_column(style="bold accent", justify="right")
     t.add_column()
     t.add_row("Chat",     f"{chat_label}  [dim]({msg_count} msgs)[/dim]")
     t.add_row("Window",   _window_summary(window))
@@ -479,11 +482,11 @@ def _step_confirm(info: dict, window, contacts, output_dir, me_name, redact_choi
     t.add_row("Me",       me_name)
     t.add_row("Redact",   _redact_summary(redact_choices))
 
-    console.print(Panel(
+    _console().print(Panel(
         t,
         title="[bold]Confirm export[/bold]",
         title_align="left",
-        border_style="green",
+        border_style="success",
         padding=(1, 2),
     ))
     return bool(questionary.confirm("Run export?", default=True).ask())

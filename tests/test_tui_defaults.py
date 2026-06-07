@@ -62,5 +62,45 @@ class DefaultsRoundtripTests(unittest.TestCase):
         self.assertEqual(nested.stat().st_mode & 0o777, 0o700)
 
 
+class ThemeOverrideTests(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = Path(self.tmp.name) / "recent.json"
+
+    def test_theme_override_roundtrip(self):
+        from imessage_export.tui import defaults
+        d = defaults.Defaults(me_name="Ben", theme_override="dawnfox")
+        defaults.save(d, self.path)
+        loaded = defaults.load(self.path)
+        self.assertEqual(loaded.theme_override, "dawnfox")
+
+    def test_old_file_without_theme_override_loads_cleanly(self):
+        import json as jsonmod
+        self.path.write_text(jsonmod.dumps({
+            "version": 1,
+            "contacts_path": "/tmp/contacts.csv",
+            "output_dir":    "/tmp/exports",
+            "me_name":       "Ben",
+            "last_chat_id":  42,
+            "last_used":     "2026-06-06T12:00:00-04:00",
+        }))
+        from imessage_export.tui import defaults
+        loaded = defaults.load(self.path)
+        self.assertIsNone(loaded.theme_override)
+        self.assertEqual(loaded.me_name, "Ben")
+
+    def test_bad_theme_override_value_coerced_to_none(self):
+        import json as jsonmod
+        self.path.write_text(jsonmod.dumps({
+            "version": 1,
+            "theme_override": "catppuccin-mocha",
+        }))
+        from imessage_export.tui import defaults
+        loaded = defaults.load(self.path)
+        self.assertIsNone(loaded.theme_override)
+
+
 if __name__ == "__main__":
     unittest.main()

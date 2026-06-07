@@ -3,11 +3,12 @@
 Schema:
     {
       "version": 1,
-      "contacts_path": "<absolute path>" | null,
-      "output_dir":    "<absolute path>" | null,
-      "me_name":       "Ben"            | null,
-      "last_chat_id":  142              | null,
-      "last_used":     "<ISO-8601>"     | null
+      "contacts_path":   "<absolute path>"   | null,
+      "output_dir":      "<absolute path>"   | null,
+      "me_name":         "Ben"              | null,
+      "last_chat_id":    142                | null,
+      "last_used":       "<ISO-8601>"       | null,
+      "theme_override":  "dawnfox"|"terafox"| null
     }
 """
 from __future__ import annotations
@@ -30,6 +31,7 @@ class Defaults:
     me_name: Optional[str] = None
     last_chat_id: Optional[int] = None
     last_used: Optional[str] = None
+    theme_override: Optional[str] = None
 
 
 def load(path: Path = DEFAULT_PATH) -> Defaults:
@@ -42,12 +44,16 @@ def load(path: Path = DEFAULT_PATH) -> Defaults:
         return Defaults()
     if data.get("version") != SCHEMA_VERSION:
         return Defaults()
+    raw_theme = data.get("theme_override")
+    if raw_theme not in ("dawnfox", "terafox", None):
+        raw_theme = None
     return Defaults(
         contacts_path=data.get("contacts_path"),
         output_dir=data.get("output_dir"),
         me_name=data.get("me_name"),
         last_chat_id=data.get("last_chat_id"),
         last_used=data.get("last_used"),
+        theme_override=raw_theme,
     )
 
 

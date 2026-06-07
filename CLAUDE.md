@@ -77,6 +77,7 @@ Output lands in `exports/<contact-or-group>/<YYYY-MM-DD>/` with:
   ready-to-render objects. When adding a new writer, you don't need to
   handle redaction at all; just make sure it consumes the standard
   `Message` / `metadata` shapes.
+- **No hardcoded colors in `tui/`.** All UI styling routes through `tui/theme.py` semantic roles (`accent`, `success`, `warning`, `error`, `muted`, `day_header`) or palette hex pulled via `PALETTES[self.app.theme]`. Don't reintroduce `"cyan"`, `"green"`, `"red"`, `[red]`, `border_style="green"`, etc.
 
 ## Schema gotchas to remember
 
