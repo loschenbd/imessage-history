@@ -197,11 +197,13 @@ class HistoryView(VerticalScroll):
         # active palette instead. The day-header / range-highlight Static
         # widgets still get their colors from App.CSS (theme variables),
         # because Textual interpolates `$var` at CSS parse time.
-        from ..theme import PALETTES, resolve_palette
+        from ..theme import PALETTES, DAWNFOX  # cheap; cached by Python import system
+        # Fallback is static (no subprocess) so rendering never blocks on
+        # `defaults read` even if theme registration regressed.
         try:
             pal = PALETTES[self.app.theme]
         except (KeyError, AttributeError):
-            pal = resolve_palette()
+            pal = DAWNFOX  # safe static fallback; never shells out
         is_me = bool(m.is_from_me)
         # `$primary` is bound to `accent` and `$accent` is bound to
         # `accent_alt` (see register_textual_themes), so use the same
