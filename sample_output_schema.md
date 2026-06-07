@@ -70,3 +70,47 @@ text, has_attachment, attachment_filenames
 ## conversation_ai_ready.txt
 
 Header → conversation lines → attribution footer.
+
+## Redacted exports
+
+When `--redact` or `--redact-only` is set, a parallel set of files appears:
+
+```
+exports/<label>/<YYYY-MM-DD>/
+├── conversation.csv                       (only without --redact-only)
+├── conversation.json                      (only without --redact-only)
+├── conversation.txt                       (only without --redact-only)
+├── conversation.md                        (only without --redact-only)
+├── conversation_ai_ready.txt              (only without --redact-only)
+├── conversation_redacted.csv              (always when --redact / --redact-only)
+├── conversation_redacted.json
+├── conversation_redacted.txt
+├── conversation_redacted.md
+├── conversation_redacted_ai_ready.txt
+├── pseudonym_map.json
+└── analysis_prompt.txt
+```
+
+In `--redact-only` mode the folder name becomes
+`<pseudonymized-label>-<4hex>` where the hash is a stable `sha1(chat_ids)`
+truncation. Same chat always hashes the same way; different chats land in
+different folders.
+
+### `pseudonym_map.json`
+
+```json
+{
+  "aliases_to_pseudonym": {
+    "Ben":           "Person A",
+    "Mallory":       "Person B",
+    "+15551234567":  "Person B"
+  },
+  "people": [
+    { "pseudonym": "Person A", "aliases": ["Ben"] },
+    { "pseudonym": "Person B", "aliases": ["Mallory", "+15551234567"] }
+  ]
+}
+```
+
+`aliases_to_pseudonym` is the flat lookup tools should use. `people` is the
+grouped human-audit view (same data, easier to scan).

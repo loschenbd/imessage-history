@@ -220,7 +220,67 @@ Plus a top-level `metadata` object: participants list, resolved window
 (`local_start`/`local_end`/`utc_start`/`utc_end`/`apple_ns_start`/
 `apple_ns_end`/`tz`), detected timestamp unit, and an attribution note.
 
-## 6. How authorship is reconstructed
+## 6. Redacting before pasting to a hosted LLM
+
+If you're feeding an export to a hosted model (Claude / ChatGPT / Gemini),
+the safest option is still a **local model** (Ollama, LM Studio). When that
+isn't an option, the exporter can produce pseudonymized parallel files.
+
+### Quick start
+
+```bash
+# Both versions side-by-side (conversation.* + conversation_redacted.*)
+python3 imessage_export.py --chat-id 42 --me-name "Ben" --redact \
+  --contacts contacts.csv
+
+# Only the redacted set (folder name itself is pseudonymized)
+python3 imessage_export.py --chat-id 42 --me-name "Ben" --redact-only \
+  --contacts contacts.csv
+```
+
+### What gets redacted
+
+- **Author labels and handles** everywhere they appear → `Person A`, `Person B`,
+  `Person C`, … (timeline-ordered; device owner is always `Person A`).
+- **Names in message body text** that appear in your `contacts.csv` or in
+  `--redact-names-file`.
+- **Phone numbers** → `[PHONE]` (disable with `--no-redact-phones`).
+- **Email addresses** → `[EMAIL]` (disable with `--no-redact-emails`).
+- **URLs** → `[URL]` (disable with `--no-redact-urls`).
+
+### Catching third-party names that aren't in contacts
+
+A name mentioned in body text but not in `contacts.csv` won't be redacted on
+its own. Use `--suggest-names` to scan and propose candidates:
+
+```bash
+python3 imessage_export.py --chat-id 42 --me-name "Ben" --suggest-names \
+  --contacts contacts.csv > suggested_names.txt
+
+# Edit suggested_names.txt — remove false positives — then:
+python3 imessage_export.py --chat-id 42 --me-name "Ben" --redact-only \
+  --contacts contacts.csv --redact-names-file suggested_names.txt
+```
+
+### `pseudonym_map.json`
+
+Written alongside the redacted files. Contains BOTH a flat lookup
+(`aliases_to_pseudonym`) for tooling AND a grouped human-audit view (`people`).
+
+**Treat this file like a password.** Anyone with it can reverse the redaction
+on the matching export. Mode is `0o600`; don't share it with the redacted
+files. If you commit a redacted export, do NOT also commit the map.
+
+### Known limitations
+
+- Third-party names not in contacts or `--redact-names-file` won't be caught
+  unless you use `--suggest-names` first.
+- Common-word names in your contacts (`Will`, `Joy`) will cause false-positive
+  substitutions on the lowercase form (case matching defaults to insensitive).
+- Phone/email/URL regexes are best-effort; exotic formats may slip through.
+- Attachment filenames stay verbatim (out of scope for v1).
+
+## 7. How authorship is reconstructed
 
 - `message.is_from_me = 1` → `author_label = --me-name` (default `"Me"`).
 - `message.is_from_me = 0` → join `message.handle_id → handle.id`, resolve via
@@ -231,7 +291,7 @@ Plus a top-level `metadata` object: participants list, resolved window
   phone with optional `+`) so `+1 (555) 123-4567` and `+15551234567` map to the
   same contact.
 
-## 7. Schema notes & gotchas
+## 8. Schema notes & gotchas
 
 - **Timestamp unit.** macOS 10.13+ stores `message.date` as **nanoseconds**
   since 2001-01-01 UTC; older versions used **seconds**. The script samples a
@@ -248,7 +308,7 @@ Plus a top-level `metadata` object: participants list, resolved window
   Closing Messages.app before exporting avoids an `SQLITE_BUSY` race when the
   WAL is being checkpointed.
 
-## 8. Run it
+## 9. Run it
 
 ```bash
 chmod +x imessage_export.py
