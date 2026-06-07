@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Read(./*)",
+      "Read(./**/*)",
+      "Bash(python3 imessage_export.py --list:*)",
+      "Bash(python3 imessage_export.py --list-contacts:*)",
+      "Bash(python3 -m unittest discover -s tests:*)",
+      "Bash(python3 -m unittest:*)",
+      "Bash(python3 tests/test_decoder.py:*)",
+      "Bash(ls:*)",
+      "Bash(find .:*)",
+      "Bash(find exports:*)",
+      "Bash(stat:*)",
+      "Bash(file:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(wc:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git rev-parse:*)"
+    ],
+    "deny": []
+  }
+}

@@ -1,0 +1,21 @@
+# Never commit exported conversations — these are private message bodies.
+exports/
+
+# Real contacts mapping is personal (phone numbers, names). Commit the example only.
+contacts.csv
+!contacts.example.csv
+
+# Python bytecode caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local editor / OS clutter
+.DS_Store
+.vscode/
+.idea/
+
+# Claude Code per-project state — track only the shared settings file.
+# Local-only settings, transcripts, and per-user state stay out of git.
+.claude/*
+!.claude/settings.json
