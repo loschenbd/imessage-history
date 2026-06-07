@@ -129,9 +129,17 @@ class HistoryView(VerticalScroll):
         self._all_messages: list = []
 
     def show_placeholder(self, text: str = "Pick a chat from the left.") -> None:
-        self.remove_children()
-        ph = Static(text, id="history-placeholder")
-        self.mount(ph)
+        # Textual's remove_children() is async — by the time mount() runs the
+        # old placeholder is still in the children list, which would trip
+        # DuplicateIds. If one already exists, update its text in place; in
+        # either case strip stale rows/headers/search-bar so the placeholder
+        # is what the user sees.
+        existing = self.query("#history-placeholder")
+        self.remove_children(".message-row, .day-header, #history-search")
+        if existing:
+            existing.first(Static).update(text)
+        else:
+            self.mount(Static(text, id="history-placeholder"))
         self._placeholder_visible = True
 
     def show_loading(self) -> None:

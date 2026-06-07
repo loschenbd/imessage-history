@@ -47,17 +47,12 @@ def _typedstream_with_text(text: str) -> bytes:
 def build(path: Path) -> None:
     """Build a fully-populated sample `chat.db` at `path`.
 
-    Layout (1:1 conversation between Me and +15551234567):
-      handle(1)  = +15551234567 (Alice)
-      chat(1)    = 1:1 with Alice
-      messages:
-        - rid 1: Alice "Hey, are you free later?"             (incoming, m.text)
-        - rid 2: Me    "Yes, after 6 works."                  (outgoing, m.text)
-        - rid 3: Alice attributedBody-only, length 200        (long incoming)
-        - rid 4: Me    tapback Loved → rid 1                  (reaction)
-        - rid 5: Me    edited message                         (date_edited != 0)
-        - rid 6: Alice "Carol said..."                        (third-party name only)
-        - rid 7: Me    phone + email + URL                    (PII regex bait)
+    Layout:
+      Primary 1:1 chat between Me and +15551234567 (Alice), 7 messages on 2025-05-01.
+      Secondary 1:1 chat between Me and +15557654321 (Bob), 1 message on 2025-04-01.
+      The secondary chat is OLDER so `list_recent_chats` orders it AFTER the
+      primary — tests that index `_all_chats[0]` see Alice. Tests that need
+      a chat switch can use `_all_chats[1]` (Bob).
     """
     if path.exists():
         path.unlink()
@@ -192,6 +187,31 @@ def build(path: Path) -> None:
         body=None,
         is_from_me=1,
     )
+
+    # ---- Secondary chat: Me ↔ Bob, single message on an older day. ----
+    # Older date so list_recent_chats sorts it AFTER the primary chat — tests
+    # that index `_all_chats[0]` keep seeing Alice; chat-switch tests can use
+    # `_all_chats[1]` to land on Bob.
+    conn.execute(
+        "INSERT INTO handle VALUES (?, ?, ?)",
+        (2, "+15557654321", "iMessage"),
+    )
+    conn.execute(
+        "INSERT INTO chat VALUES (?, ?, ?, ?, ?)",
+        (2, "iMessage;-;+15557654321", "+15557654321", None, 45),
+    )
+    conn.execute("INSERT INTO chat_handle_join VALUES (?, ?)", (2, 2))
+    bob_when = datetime(2025, 4, 1, 10, 0, 0, tzinfo=timezone.utc)
+    conn.execute(
+        """INSERT INTO message (
+             ROWID, guid, date, text, attributedBody, is_from_me,
+             cache_has_attachments, associated_message_type,
+             associated_message_guid, date_edited, date_retracted,
+             balloon_bundle_id, handle_id
+           ) VALUES (?, ?, ?, ?, NULL, ?, 0, 0, NULL, 0, 0, NULL, ?)""",
+        (101, "GUID-00000101", to_apple_ns(bob_when), "Bob says hi.", 0, 2),
+    )
+    conn.execute("INSERT INTO chat_message_join VALUES (?, ?)", (2, 101))
 
     conn.commit()
     conn.close()
