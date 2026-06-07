@@ -124,6 +124,9 @@ class ImessageExportApp(App):
         if last and any(c.get("chat_id") == last for c in self.state.chats):
             sidebar.select_chat_id(last)
 
+        # Now that initial selection is wired, let arrow-nav auto-load.
+        sidebar.enable_highlight_autoload()
+
         # Offer to scan Contacts.app if we have no source.
         has_contacts_file = (
             (self.state.contacts_path and self.state.contacts_path.exists())
