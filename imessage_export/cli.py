@@ -115,18 +115,81 @@ def validate_args(args):
 
 
 def main(argv=None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
     validate_args(args)
     # Exported message bodies are private. Make new dirs 700 and new files 600
     # by default — protects against group/other read on any filesystem that
     # honors POSIX modes (most local disks; some network shares ignore it).
     os.umask(0o077)
+    return _dispatch(args, argv if argv is not None else sys.argv[1:], parser)
 
-    conn = open_db(Path(args.db))
+
+def _dispatch(args, argv, parser) -> int:
+    no_explicit_args = (argv == [] or argv == ())
+    is_tty = sys.stdout.isatty() and sys.stderr.isatty()
+    is_ci = bool(os.environ.get("CI") or os.environ.get("NONINTERACTIVE"))
+    has_action_flag = bool(
+        args.list or args.list_contacts or args.chat_id or args.chat_identifier
+        or args.participant or getattr(args, "from_date", None) or getattr(args, "to_date", None)
+        or args.date
+    )
+
+    if no_explicit_args and is_tty and not is_ci and not has_action_flag:
+        return _run_wizard()
+
+    if args.list and is_tty and not is_ci:
+        return _list_with_rich_table(args)
+    if args.list_contacts and is_tty and not is_ci:
+        return _list_contacts_with_rich_table(args)
+
+    if no_explicit_args:
+        parser.print_help()
+        return 2
+
+    try:
+        conn = open_db(Path(args.db))
+    except Exception as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 1
     try:
         return _run(args, conn)
     finally:
         conn.close()
+
+
+def _run_wizard() -> int:
+    try:
+        from .tui.wizard import run as run_wizard
+    except ImportError:
+        print(_TUI_MISSING_MSG, file=sys.stderr)
+        return 2
+    return run_wizard()
+
+
+def _list_with_rich_table(args) -> int:
+    try:
+        from .tui.tables import list_chats as tui_list
+    except ImportError:
+        print(_TUI_MISSING_MSG, file=sys.stderr)
+        return 2
+    return tui_list(args)
+
+
+def _list_contacts_with_rich_table(args) -> int:
+    try:
+        from .tui.tables import list_contacts as tui_list_contacts
+    except ImportError:
+        print(_TUI_MISSING_MSG, file=sys.stderr)
+        return 2
+    return tui_list_contacts(args)
+
+
+_TUI_MISSING_MSG = (
+    "imessage-export: interactive mode needs the [tui] extra.\n"
+    "  pip install 'imessage-history[tui]'\n"
+    "Or run headless:  imessage-export --list"
+)
 
 
 def _run(args, conn) -> int:
