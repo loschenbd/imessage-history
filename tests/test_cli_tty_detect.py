@@ -36,7 +36,19 @@ class TTYDetectTests(unittest.TestCase):
             rc = cli.main([])
         self.assertEqual(rc, 2)
 
-    def test_tty_no_args_calls_wizard_dispatch(self):
+    def test_tty_no_args_calls_app_dispatch(self):
+        with mock.patch.object(sys.stdout, "isatty", return_value=True), \
+             mock.patch.object(sys.stderr, "isatty", return_value=True), \
+             mock.patch.dict(os.environ, {}, clear=False), \
+             mock.patch("imessage_export.cli._run_app") as run_app:
+            os.environ.pop("CI", None)
+            os.environ.pop("NONINTERACTIVE", None)
+            run_app.return_value = 0
+            rc = cli.main([])
+        run_app.assert_called_once()
+        self.assertEqual(rc, 0)
+
+    def test_tty_wizard_flag_calls_wizard_dispatch(self):
         with mock.patch.object(sys.stdout, "isatty", return_value=True), \
              mock.patch.object(sys.stderr, "isatty", return_value=True), \
              mock.patch.dict(os.environ, {}, clear=False), \
@@ -44,8 +56,20 @@ class TTYDetectTests(unittest.TestCase):
             os.environ.pop("CI", None)
             os.environ.pop("NONINTERACTIVE", None)
             run_wiz.return_value = 0
-            rc = cli.main([])
+            rc = cli.main(["--wizard"])
         run_wiz.assert_called_once()
+        self.assertEqual(rc, 0)
+
+    def test_app_flag_calls_app_dispatch(self):
+        with mock.patch.object(sys.stdout, "isatty", return_value=True), \
+             mock.patch.object(sys.stderr, "isatty", return_value=True), \
+             mock.patch.dict(os.environ, {}, clear=False), \
+             mock.patch("imessage_export.cli._run_app") as run_app:
+            os.environ.pop("CI", None)
+            os.environ.pop("NONINTERACTIVE", None)
+            run_app.return_value = 0
+            rc = cli.main(["--app"])
+        run_app.assert_called_once()
         self.assertEqual(rc, 0)
 
 

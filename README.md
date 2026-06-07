@@ -45,6 +45,24 @@ exactly as before.
 The headless flag surface is unchanged — `imessage-export --chat-id N
 --date 2026-06-06` still works regardless of which install you used.
 
+## Interactive app (default)
+
+On a TTY, `imessage-export` opens a Textual app:
+
+- **Left:** scrollable, filter-as-you-type chat list.
+- **Right:** the selected chat's full history.
+- **Footer:** status line + action buttons (`Window`, `Settings`,
+  `Redact`, `Export`, `Wizard`, `Help`, `Quit`).
+
+To set the export window, either click two messages in the history
+pane (first click = start, second = end), or press `W` (or click
+`[ Window… ]`) to type a window. Press `E` to export.
+
+The app remembers your last contacts file, output directory, "me"
+label, and most-recently-used chat across runs.
+
+Prefer the linear wizard from Phase 1? Run `imessage-export --wizard`.
+
 ## Privacy & scope
 
 This tool reads your private message history. Before running it, know exactly
