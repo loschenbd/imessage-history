@@ -42,6 +42,10 @@ class ImessageExportApp(App):
     TITLE = "imessage-export"
     SUB_TITLE = "interactive mode"
 
+    BINDINGS = [
+        ("w", "open_window_modal", "Window"),
+    ]
+
     def __init__(self) -> None:
         super().__init__()
         self.state = AppState()
@@ -146,3 +150,16 @@ class ImessageExportApp(App):
             self.state.range_end_msg_id,
             self.state.selected_chat_messages,
         )
+
+    # ------------------------------------------------------------------
+    # Task 8: WindowModal
+    # ------------------------------------------------------------------
+
+    async def action_open_window_modal(self) -> None:
+        from .modals import WindowModal
+        result = await self.push_screen_wait(WindowModal())
+        if result is None:
+            return
+        self.state.typed_window = result
+        self.state.window_source = "typed"
+        self.state.last_export_status = None
