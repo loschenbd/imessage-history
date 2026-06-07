@@ -197,7 +197,9 @@ def _load_contacts_for_picker(defaults) -> dict:
 def _step_pick_chat(conn, defaults: Defaults, contacts: dict) -> Optional[int]:
     """Type-to-filter chat picker. No pre-highlighted default."""
     _step_banner(1, "Pick a chat")
-    rows = list_recent_chats(conn, 100)
+    # Fetch every chat so the user can type-to-filter across the full
+    # history, not just the most recent few hundred.
+    rows = list_recent_chats(conn, None)
     if not rows:
         console.print("[red]No chats found in chat.db.[/red]")
         return None
@@ -485,10 +487,8 @@ def _enriched_chat_info(conn, chat_id: int) -> dict:
     """Combine chat_info() with the matching list_recent_chats() row.
 
     `chat_info()` returns display_name/style/chat_identifier/is_group but no
-    msg_count or last-seen. We look up the picker row by id (best-effort —
-    chats past the 100-row cap fall back to bare chat_info) so the confirm
-    panel can show "(N msgs)" and the "everything" branch can warn on huge
-    chats.
+    msg_count or last-seen. We scan all chats so the confirm panel can show
+    "(N msgs)" regardless of how far back the picked chat is.
     """
     base = dict(chat_info(conn, chat_id))
     base["chat_id"] = chat_id
@@ -496,7 +496,7 @@ def _enriched_chat_info(conn, chat_id: int) -> dict:
         base.get("display_name") or base.get("chat_identifier") or f"chat {chat_id}"
     )
     base["msg_count"] = 0
-    for r in list_recent_chats(conn, 200):
+    for r in list_recent_chats(conn, None):
         if r.get("chat_id") == chat_id:
             base["msg_count"] = r.get("msg_count", 0)
             base["participants"] = r.get("participants", "")
