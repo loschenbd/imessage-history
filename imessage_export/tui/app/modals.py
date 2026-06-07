@@ -349,15 +349,25 @@ class HelpModal(ModalScreen[None]):
         with Vertical():
             yield Static("Help", classes="modal-title")
             yield Static(
-                "Arrow keys: navigate\n"
-                "Enter:      activate the focused thing\n"
-                "Tab:        cycle focus\n"
-                "Esc:        close modal / clear marks\n"
-                "Click:      mark message as range endpoint\n"
+                "Navigation\n"
+                "  Tab / Shift+Tab       Cycle focus: Sidebar → History → Actions\n"
+                "  ↑ ↓                    Move within the focused region\n"
+                "  Home / End            Jump to top / bottom\n"
+                "  PageUp / PageDown     Page within the focused region\n"
+                "  Esc                   Context-aware: clear filter / clear marks / close search\n"
                 "\n"
-                "Accelerators (when no input is focused):\n"
-                "  W  Window…    S  Settings…   R  Redact…\n"
-                "  E  Export     Z  Wizard      H/?  Help     Q  Quit\n"
+                "Sidebar\n"
+                "  (type letters)        Filter the chat list\n"
+                "  Enter                 Open the highlighted chat\n"
+                "\n"
+                "History\n"
+                "  Enter                 Mark range endpoint (1st = start, 2nd = end)\n"
+                "  /                     Search within this chat\n"
+                "  Esc                   Clear search / clear marks\n"
+                "\n"
+                "Actions (work globally except while typing in an input)\n"
+                "  W  Window…   S  Settings…   R  Redact…   E  Export\n"
+                "  Z  Wizard    H/?  Help       Q  Quit\n"
             )
             yield Button("Close", id="close", variant="primary")
 

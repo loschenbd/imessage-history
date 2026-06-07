@@ -378,5 +378,34 @@ class TestStatusLineFocusChip(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("[sidebar]", rendered)
 
 
+class TestHelpModalText(unittest.IsolatedAsyncioTestCase):
+    async def test_help_modal_documents_new_bindings(self):
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        with _patched_app(tmpdir.name):
+            from imessage_export.tui.app.app import ImessageExportApp
+            from imessage_export.tui.app.modals import HelpModal
+            from textual.widgets import Static
+
+            app = ImessageExportApp()
+            async with app.run_test() as pilot:
+                await _boot_and_select_first_chat(pilot, app)
+                app.push_screen(HelpModal())
+                await pilot.pause()
+                modal = app.screen
+                self.assertIsInstance(modal, HelpModal)
+                body_text = "\n".join(
+                    str(s.renderable) for s in modal.query(Static)
+                )
+                # New navigation lines must appear.
+                self.assertIn("Tab", body_text)
+                self.assertIn("Sidebar", body_text)
+                self.assertIn("History", body_text)
+                self.assertIn("/", body_text)
+                # Existing accelerator legend must still be there.
+                self.assertIn("Export", body_text)
+                self.assertIn("Redact", body_text)
+
+
 if __name__ == "__main__":
     unittest.main()
