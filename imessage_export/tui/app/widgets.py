@@ -113,6 +113,9 @@ class HistoryView(VerticalScroll):
     HistoryView > .message-row.is-in-range {
         background: $accent 15%;
     }
+    HistoryView > .message-row:focus {
+        background: $accent 50%;
+    }
     HistoryView > #history-placeholder {
         padding: 2 0;
     }
@@ -149,6 +152,7 @@ class HistoryView(VerticalScroll):
                 self.mount(Static(header, classes="day-header"))
                 last_date = day
             row = Static(self._format_row(m), classes="message-row")
+            row.can_focus = True
             row.data_msg_id = m.message_id  # type: ignore[attr-defined]
             self.mount(row)
 
