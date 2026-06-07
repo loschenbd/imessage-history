@@ -769,7 +769,26 @@ def write_csv(path: Path, messages: list[Message]):
 
 
 def write_json(path: Path, messages: list[Message], metadata: dict):
-    payload = {"metadata": metadata, "messages": [asdict(m) for m in messages]}
+    """JSON export. Adds a `gap_seconds_before` field per message (computed
+    from successive `timestamp_utc` values). First message has 0. Lets
+    downstream consumers mirror the gap markers without re-parsing
+    timestamps."""
+    msg_dicts = []
+    prev_dt = None
+    for m in messages:
+        d = asdict(m)
+        gap = 0
+        if m.timestamp_utc:
+            try:
+                dt = datetime.fromisoformat(m.timestamp_utc)
+                if prev_dt is not None:
+                    gap = int((dt - prev_dt).total_seconds())
+                prev_dt = dt
+            except (ValueError, TypeError):
+                pass
+        d["gap_seconds_before"] = gap
+        msg_dicts.append(d)
+    payload = {"metadata": metadata, "messages": msg_dicts}
     with path.open("w") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
 

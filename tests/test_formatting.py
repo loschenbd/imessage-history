@@ -382,5 +382,36 @@ class WriteCsvLocalDateTests(unittest.TestCase):
         self.assertEqual(header[ts_idx + 1], "local_date")
 
 
+import json as jsonmod
+
+from imessage_export import write_json
+
+
+class WriteJsonGapTests(unittest.TestCase):
+    META = {"chats": [], "participants": [], "me_name": "Ben",
+            "message_count": 0, "window": {}}
+
+    def _write(self, messages) -> dict:
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "out.json"
+            write_json(p, messages, self.META)
+            return jsonmod.loads(p.read_text())
+
+    def test_first_message_gap_is_zero(self):
+        m = Stub(timestamp="2026-06-06 09:00:00", text="hi")
+        m.timestamp_utc = "2026-06-06T16:00:00+00:00"
+        payload = self._write([m])
+        self.assertEqual(payload["messages"][0]["gap_seconds_before"], 0)
+
+    def test_subsequent_gap_in_seconds(self):
+        m1 = Stub(timestamp="2026-06-06 09:00:00", text="hi")
+        m1.timestamp_utc = "2026-06-06T16:00:00+00:00"
+        m2 = Stub(timestamp="2026-06-06 10:30:00", text="back")
+        m2.timestamp_utc = "2026-06-06T17:30:00+00:00"
+        payload = self._write([m1, m2])
+        self.assertEqual(payload["messages"][0]["gap_seconds_before"], 0)
+        self.assertEqual(payload["messages"][1]["gap_seconds_before"], 5400)
+
+
 if __name__ == "__main__":
     unittest.main()
