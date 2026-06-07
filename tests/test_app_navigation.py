@@ -328,5 +328,32 @@ class TestAutoFocusHistoryAfterChatSelect(unittest.IsolatedAsyncioTestCase):
                 self.assertIs(app.focused, rows[0])
 
 
+class TestActiveRegionBorder(unittest.IsolatedAsyncioTestCase):
+    async def test_region_active_class_follows_focus(self):
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        with _patched_app(tmpdir.name):
+            from imessage_export.tui.app.app import ImessageExportApp
+            from imessage_export.tui.app.widgets import HistoryView, Sidebar, ActionBar
+
+            app = ImessageExportApp()
+            async with app.run_test() as pilot:
+                await _boot_and_select_first_chat(pilot, app)
+                sidebar = app.query_one(Sidebar)
+                history = app.query_one(HistoryView)
+                action_bar = app.query_one(ActionBar)
+
+                # Right after chat load, history is the active region (Task 7).
+                self.assertTrue(history.has_class("region-active"))
+                self.assertFalse(sidebar.has_class("region-active"))
+                self.assertFalse(action_bar.has_class("region-active"))
+
+                # Focus the sidebar list — sidebar becomes active.
+                sidebar.query_one("#sidebar-list").focus()
+                await pilot.pause()
+                self.assertTrue(sidebar.has_class("region-active"))
+                self.assertFalse(history.has_class("region-active"))
+
+
 if __name__ == "__main__":
     unittest.main()

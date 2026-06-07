@@ -37,6 +37,15 @@ class ImessageExportApp(App):
     #main {
         height: 1fr;
     }
+    Sidebar.region-active {
+        border-right: thick $accent;
+    }
+    HistoryView.region-active {
+        border-left: thick $accent;
+    }
+    ActionBar.region-active {
+        border-top: thick $accent;
+    }
     """
 
     TITLE = "imessage-export"
@@ -282,6 +291,23 @@ class ImessageExportApp(App):
             me_name=self.state.me_name,
             last_chat_id=self.state.selected_chat_id,
         ))
+
+    def on_descendant_focus(self, event) -> None:
+        """Whenever focus changes, mark exactly one region as active."""
+        from .widgets import Sidebar, HistoryView, ActionBar
+        active_region = None
+        w = event.widget
+        while w is not None:
+            if isinstance(w, (Sidebar, HistoryView, ActionBar)):
+                active_region = w
+                break
+            w = w.parent
+        for region_cls in (Sidebar, HistoryView, ActionBar):
+            try:
+                region = self.query_one(region_cls)
+            except Exception:
+                continue
+            region.set_class(region is active_region, "region-active")
 
     # ------------------------------------------------------------------
     # Task 10: RedactModal
