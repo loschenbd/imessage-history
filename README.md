@@ -3,7 +3,8 @@
 [![tests](https://img.shields.io/github/actions/workflow/status/loschenbd/imessage-history/test.yml?branch=main&label=tests)](https://github.com/loschenbd/imessage-history/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Stdlib only](https://img.shields.io/badge/dependencies-stdlib%20only-brightgreen.svg)](pyproject.toml)
+[![Zero required deps](https://img.shields.io/badge/required%20deps-zero-brightgreen.svg)](pyproject.toml)
+[![Optional TUI](https://img.shields.io/badge/optional-TUI%20extra-blue.svg)](pyproject.toml)
 
 Export a single iMessage conversation from the local macOS Messages database into
 AI-ready files with explicit speaker attribution on every line.
@@ -15,6 +16,34 @@ AI-ready files with explicit speaker attribution on every line.
   `--start-datetime/--end-datetime`) in **local time**, converted to Apple's
   2001-epoch units. The resolved window is included in `conversation.json`'s
   `metadata` block and in the AI-ready header.
+
+## Interactive TUI (optional)
+
+For a guided wizard, install with the `[tui]` extra:
+
+```bash
+pip install 'imessage-history[tui]'
+```
+
+Then just run:
+
+```bash
+imessage-export
+```
+
+You'll get a Rich-styled welcome panel, a type-to-filter chat picker, a
+time-window picker, and a confirm panel before the export runs. After a
+successful export, you can optionally preview `conversation.md` inline
+with paging.
+
+The `[tui]` extra adds two pure-Python dependencies:
+[Rich](https://github.com/Textualize/rich) and
+[Questionary](https://github.com/tmbo/questionary). The default install
+(`pip install imessage-history`) still has zero runtime deps and works
+exactly as before.
+
+The headless flag surface is unchanged — `imessage-export --chat-id N
+--date 2026-06-06` still works regardless of which install you used.
 
 ## Privacy & scope
 
