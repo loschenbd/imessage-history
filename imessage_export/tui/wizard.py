@@ -43,8 +43,9 @@ def _step_banner(n: int, label: str):
 
 def run() -> int:
     """Drive the wizard. Returns process exit code."""
-    _welcome()
     defaults = load_defaults()
+    contacts_for_picker = _load_contacts_for_picker(defaults)
+    _welcome(has_contacts=bool(contacts_for_picker))
 
     try:
         conn = open_db(_default_db_path())
@@ -54,7 +55,7 @@ def run() -> int:
         return 2
 
     try:
-        chat_id = _step_pick_chat(conn, defaults)
+        chat_id = _step_pick_chat(conn, defaults, contacts_for_picker)
         if chat_id is None:
             return 0
 
@@ -112,12 +113,18 @@ def run() -> int:
 # ──────────────────────────────────────────────────────────────────────────
 
 
-def _welcome():
+def _welcome(has_contacts: bool = True):
+    hint = "" if has_contacts else (
+        "\n\n[yellow]Tip:[/yellow] [white]No contacts file found. "
+        "Run [bold]imessage-export --build-contacts[/bold] once to "
+        "populate it from macOS Contacts.app.[/white]"
+    )
     console.print()  # leading whitespace
     console.print(Panel(
         "[bold cyan]imessage-export[/bold cyan]  [dim]·[/dim]  interactive mode\n\n"
         "[white]Export a single conversation from your local Messages database\n"
-        "into AI-ready files. [bold]Everything stays on this machine.[/bold][/white]\n\n"
+        "into AI-ready files. [bold]Everything stays on this machine.[/bold][/white]"
+        + hint + "\n\n"
         "[dim]Press Ctrl+C at any prompt to cancel.\n"
         "Run with --help to see the headless flag surface.[/dim]",
         title="[bold]Welcome[/bold]",
@@ -127,7 +134,25 @@ def _welcome():
     ))
 
 
-def _step_pick_chat(conn, defaults: Defaults) -> Optional[int]:
+def _load_contacts_for_picker(defaults) -> dict:
+    """Try to load contacts from defaults.contacts_path or ./contacts.csv.
+    Returns {} on any failure — picker degrades to raw handles gracefully."""
+    from pathlib import Path as _P
+    from ..contacts import load_contacts
+    candidate = None
+    if defaults.contacts_path and _P(defaults.contacts_path).exists():
+        candidate = _P(defaults.contacts_path)
+    elif (_P.cwd() / "contacts.csv").exists():
+        candidate = _P.cwd() / "contacts.csv"
+    if candidate is None:
+        return {}
+    try:
+        return load_contacts(candidate)
+    except Exception:
+        return {}
+
+
+def _step_pick_chat(conn, defaults: Defaults, contacts: dict) -> Optional[int]:
     """Type-to-filter chat picker. No pre-highlighted default."""
     _step_banner(1, "Pick a chat")
     rows = list_recent_chats(conn, 100)
@@ -136,7 +161,7 @@ def _step_pick_chat(conn, defaults: Defaults) -> Optional[int]:
         return None
 
     choices = [
-        questionary.Choice(_format_chat_row(r), value=r["chat_id"])
+        questionary.Choice(_format_chat_row(r, contacts), value=r["chat_id"])
         for r in rows
     ]
 
@@ -148,19 +173,36 @@ def _step_pick_chat(conn, defaults: Defaults) -> Optional[int]:
     ).ask()
 
 
-def _format_chat_row(r: dict) -> str:
+def _format_chat_row(r: dict, contacts: dict) -> str:
     """Format one chat row for the picker."""
-    who = (
+    raw_who = (
         r.get("display_name")
         or r.get("participants")
         or r.get("chat_identifier")
         or "(unknown)"
     )
+    # Resolve handles via contacts. `raw_who` may be a single handle or a
+    # comma-joined list of handles (group chat).
+    who = _resolve_names(raw_who, contacts) if contacts else raw_who
     kind = r.get("style", "")
     msgs = r.get("msg_count", "?")
     last = r.get("last_message_local") or "—"
     rid = r.get("chat_id", "?")
     return f"[{rid}] {who} · {kind} · {msgs} msgs · last {last}"
+
+
+def _resolve_names(raw: str, contacts: dict) -> str:
+    """Apply the contacts map to a handle or comma-separated handle list.
+    Falls back to the raw handle when no mapping exists. Dedups names."""
+    from ..contacts import normalize_handle
+    seen = []
+    for piece in raw.split(","):
+        h = piece.strip()
+        key = normalize_handle(h)
+        name = contacts.get(key) or contacts.get(h) or h
+        if name not in seen:
+            seen.append(name)
+    return ", ".join(seen)
 
 
 def _step_pick_window(info: dict):

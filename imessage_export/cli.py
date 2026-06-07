@@ -78,6 +78,17 @@ def build_parser() -> argparse.ArgumentParser:
                      help="Resolve attachment filenames per message")
     out.add_argument("--limit", type=int, help="Cap number of messages")
 
+    macos = p.add_argument_group("macOS Contacts integration")
+    macos.add_argument(
+        "--build-contacts",
+        nargs="?",
+        const="contacts.csv",
+        default=None,
+        metavar="PATH",
+        help="Read macOS Contacts.app via AppleScript and write a "
+             "handle,name CSV (default: contacts.csv). Skips export.",
+    )
+
     red = p.add_argument_group("redaction / pseudonymization")
     red.add_argument("--redact", action="store_true",
                      help="Also write a parallel set of redacted files "
@@ -132,11 +143,15 @@ def _dispatch(args, argv, parser) -> int:
     has_action_flag = bool(
         args.list or args.list_contacts or args.chat_id or args.chat_identifier
         or args.participant or getattr(args, "from_date", None) or getattr(args, "to_date", None)
-        or args.date
+        or args.date or args.build_contacts
     )
 
     if no_explicit_args and is_tty and not is_ci and not has_action_flag:
         return _run_wizard()
+
+    if args.build_contacts is not None:
+        from .contacts_macos import build_contacts_csv
+        return build_contacts_csv(Path(args.build_contacts))
 
     if args.list and is_tty and not is_ci:
         return _list_with_rich_table(args)
