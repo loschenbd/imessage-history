@@ -294,7 +294,7 @@ class ImessageExportApp(App):
 
     async def action_export(self) -> None:
         from .modals import ExportConfirmModal
-        from .state import resolved_window
+        from .state import resolved_window, _format_window
 
         if self.state.selected_chat_id is None:
             return
@@ -310,7 +310,7 @@ class ImessageExportApp(App):
         n = self._count_messages_in_window(window)
         summary = [
             f"Chat:    {chat_label}",
-            f"Window:  {window!r}",
+            f"Window:  {_format_window(window)}",
             f"Count:   {n} messages",
             f"Output:  {self.state.output_dir}",
             f"Redact:  {'on' if self.state.redact else 'off'}",

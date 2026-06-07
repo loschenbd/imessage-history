@@ -241,17 +241,9 @@ class StatusLine(Static):
         if state.last_export_status:
             self.update(state.last_export_status)
             return
-        from .state import resolved_window
+        from .state import resolved_window, _format_window
         w = resolved_window(state)
-        if w["mode"] == "day":
-            bits = [w["date"]]
-            if w.get("start_time") or w.get("end_time"):
-                bits.append(f"{w.get('start_time') or '00:00'}–{w.get('end_time') or '23:59'}")
-            window_str = " ".join(bits)
-        elif w["mode"] == "range":
-            window_str = f"{w['from_date']}..{w['to_date']}"
-        else:
-            window_str = "everything"
+        window_str = _format_window(w)
 
         source = {
             "selection": "from selection",

@@ -4,7 +4,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from imessage_export.tui.app.state import AppState, resolved_window, reset_after_export
+from imessage_export.tui.app.state import AppState, _format_window, resolved_window, reset_after_export
 
 
 class TestResolvedWindow(unittest.TestCase):
@@ -76,6 +76,51 @@ class TestResolvedWindow(unittest.TestCase):
         out = resolved_window(s)
         self.assertEqual(out["start_time"], "09:00")
         self.assertEqual(out["end_time"], "10:00")
+
+
+class TestFormatWindow(unittest.TestCase):
+    def test_all_mode(self):
+        self.assertEqual(_format_window({"mode": "all"}), "everything")
+
+    def test_day_no_times(self):
+        self.assertEqual(
+            _format_window({"mode": "day", "date": "2026-06-06"}),
+            "2026-06-06",
+        )
+
+    def test_day_with_times(self):
+        self.assertEqual(
+            _format_window({"mode": "day", "date": "2026-06-06",
+                            "start_time": "09:00", "end_time": "17:00"}),
+            "2026-06-06 09:00–17:00",
+        )
+
+    def test_day_with_only_start_time(self):
+        self.assertEqual(
+            _format_window({"mode": "day", "date": "2026-06-06",
+                            "start_time": "09:00", "end_time": None}),
+            "2026-06-06 09:00–23:59",
+        )
+
+    def test_range_no_times(self):
+        self.assertEqual(
+            _format_window({"mode": "range", "from_date": "2026-06-01", "to_date": "2026-06-06"}),
+            "2026-06-01..2026-06-06",
+        )
+
+    def test_range_with_times(self):
+        self.assertEqual(
+            _format_window({"mode": "range", "from_date": "2026-06-01", "to_date": "2026-06-06",
+                            "start_time": "09:00", "end_time": "17:00"}),
+            "2026-06-01..2026-06-06 09:00–17:00",
+        )
+
+    def test_range_with_only_end_time(self):
+        self.assertEqual(
+            _format_window({"mode": "range", "from_date": "2026-06-01", "to_date": "2026-06-06",
+                            "start_time": None, "end_time": "17:00"}),
+            "2026-06-01..2026-06-06 00:00–17:00",
+        )
 
 
 class TestResetAfterExport(unittest.TestCase):

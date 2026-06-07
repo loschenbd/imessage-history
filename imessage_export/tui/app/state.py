@@ -75,6 +75,36 @@ def _bracket_to_window(state: AppState) -> dict:
     }
 
 
+def _format_window(window: dict) -> str:
+    """Return a human-readable one-line description of a window dict.
+
+    Examples:
+      {"mode": "all"}                                   → "everything"
+      {"mode": "day", "date": "2026-06-06"}             → "2026-06-06"
+      {"mode": "day", "date": "…", "start_time": "09:00", "end_time": "17:00"} → "2026-06-06 09:00–17:00"
+      {"mode": "range", "from_date": "2026-06-01", "to_date": "2026-06-06"}    → "2026-06-01..2026-06-06"
+      (range + times)                                   → "2026-06-01..2026-06-06 09:00–17:00"
+    """
+    mode = window.get("mode", "all")
+    if mode == "all":
+        return "everything"
+    if mode == "day":
+        parts = [window["date"]]
+        st = window.get("start_time")
+        et = window.get("end_time")
+        if st or et:
+            parts.append(f"{st or '00:00'}–{et or '23:59'}")
+        return " ".join(parts)
+    if mode == "range":
+        base = f"{window['from_date']}..{window['to_date']}"
+        st = window.get("start_time")
+        et = window.get("end_time")
+        if st or et:
+            base += f" {st or '00:00'}–{et or '23:59'}"
+        return base
+    return repr(window)
+
+
 def reset_after_export(state: AppState, *, success_tag: str) -> None:
     """Clear the range/window state after a successful export.
 

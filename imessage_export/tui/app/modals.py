@@ -99,6 +99,8 @@ class WindowModal(ModalScreen[Optional[dict]]):
                 "mode": "range",
                 "from_date": self.query_one("#from-date", Input).value.strip(),
                 "to_date":   self.query_one("#to-date", Input).value.strip(),
+                "start_time": _t("start-time"),
+                "end_time":   _t("end-time"),
             })
         else:
             self.dismiss({"mode": "all"})
