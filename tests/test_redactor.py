@@ -168,5 +168,70 @@ class PseudonymMapTests(unittest.TestCase):
         self.assertEqual(pseudonyms[27], "Person AB")
 
 
+class RedactTextTests(unittest.TestCase):
+    def _make(self, **cfg):
+        messages = [
+            _msg(1, is_from_me=0, author_label="Alice", sender_handle="+15551234567"),
+            _msg(2, is_from_me=1, author_label="Ben"),
+        ]
+        md = _metadata([("+15551234567", "Alice")])
+        return ie.Redactor(messages, md,
+                           contacts={"+15551234567": "Alice"},
+                           config=ie.RedactionConfig(me_name="Ben", **cfg))
+
+    def test_alias_substituted_in_text(self):
+        r = self._make()
+        self.assertEqual(r._redact_text("Alice said hi"), "Person B said hi")
+
+    def test_case_insensitive_by_default(self):
+        r = self._make()
+        self.assertEqual(r._redact_text("alice said hi"), "Person B said hi")
+
+    def test_case_sensitive_mode_respected(self):
+        r = self._make(case_sensitive=True)
+        self.assertEqual(r._redact_text("alice said hi"), "alice said hi")
+        self.assertEqual(r._redact_text("Alice said hi"), "Person B said hi")
+
+    def test_longest_alias_wins(self):
+        # If both "Alice" and "Alice Smith" map to same person, the longer match should
+        # win (no leftover " Smith" suffix).
+        messages = [_msg(1, is_from_me=0, author_label="Alice")]
+        md = _metadata([])
+        r = ie.Redactor(messages, md,
+                        contacts={"+15551234567": "Alice Smith", "+15557654321": "Alice"},
+                        config=ie.RedactionConfig(me_name="Ben"))
+        # Both should map to the same Person B (since the names key together via
+        # _build_pseudonym_map only if they share a handle — verify behavior is at
+        # least that the longer name fully consumes).
+        self.assertNotIn("Smith", r._redact_text("Alice Smith said hi"))
+
+    def test_phone_redacted(self):
+        r = self._make()
+        self.assertEqual(r._redact_text("call me at +15557654321"), "call me at [PHONE]")
+
+    def test_phone_redaction_can_be_disabled(self):
+        r = self._make(redact_phones=False)
+        self.assertEqual(r._redact_text("call me at +15557654321"), "call me at +15557654321")
+
+    def test_email_redacted(self):
+        r = self._make()
+        self.assertEqual(r._redact_text("write alice@example.com"), "write [EMAIL]")
+
+    def test_url_redacted(self):
+        r = self._make()
+        self.assertEqual(r._redact_text("see https://example.com/x"), "see [URL]")
+
+    def test_regex_metacharacters_in_alias_safe(self):
+        # "O'Brien" and "(work)" as contact names must not crash or match unintended substrings.
+        messages = [_msg(1, is_from_me=0, author_label="O'Brien")]
+        md = _metadata([])
+        r = ie.Redactor(messages, md,
+                        contacts={"+15551234567": "O'Brien", "+15557654321": "(work)"},
+                        config=ie.RedactionConfig(me_name="Ben"))
+        out = r._redact_text("Met O'Brien at (work) yesterday")
+        self.assertNotIn("O'Brien", out)
+        self.assertNotIn("(work)",  out)
+
+
 if __name__ == "__main__":
     unittest.main()

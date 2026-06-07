@@ -277,6 +277,49 @@ class Redactor:
             "people": people,
         }
 
+    # PII regexes. Conservative; documented as best-effort in README.
+    # Phone uses a negative lookbehind for word chars so a leading "+" at the
+    # start of a token (e.g. "+15551234567" after a space) matches cleanly —
+    # \b doesn't sit between a non-word space and the non-word "+".
+    _PHONE_RE = re.compile(r"(?<!\w)\+?\d[\d\-\s().]{7,}\b")
+    _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+    _URL_RE   = re.compile(r"https?://\S+")
+
+    def _ordered_aliases(self) -> list[str]:
+        """Aliases ordered longest-first so 'Alice Smith' wins over 'Alice'."""
+        return sorted(self._alias_to_pseudonym.keys(), key=len, reverse=True)
+
+    def _redact_text(self, s: str) -> str:
+        if not s:
+            return s
+        out = s
+        # Scrub PII first so an alias inside an email local-part
+        # ("alice@example.com") doesn't get partially substituted before the
+        # email regex can match the whole address.
+        if self._config.redact_phones:
+            out = self._PHONE_RE.sub("[PHONE]", out)
+        if self._config.redact_emails:
+            out = self._EMAIL_RE.sub("[EMAIL]", out)
+        if self._config.redact_urls:
+            out = self._URL_RE.sub("[URL]", out)
+        case_sensitive = self._config.case_sensitive
+        for alias in self._ordered_aliases():
+            pseudonym = self._alias_to_pseudonym[alias]
+            if case_sensitive:
+                out = out.replace(alias, pseudonym)
+            else:
+                # Case-insensitive literal replace. Loop so all occurrences fire.
+                # We rebuild lowercased indexes each pass since `out` shrinks/grows.
+                lower_alias = alias.lower()
+                start = 0
+                while True:
+                    idx = out.lower().find(lower_alias, start)
+                    if idx == -1:
+                        break
+                    out = out[:idx] + pseudonym + out[idx + len(alias):]
+                    start = idx + len(pseudonym)
+        return out
+
 
 def classify_tapback(amt: int) -> Optional[tuple[str, bool]]:
     """Return (name, removed) or None for non-tapbacks."""
