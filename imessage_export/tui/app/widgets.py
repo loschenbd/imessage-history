@@ -152,6 +152,7 @@ class HistoryView(VerticalScroll):
         self._all_messages: list = []
         self._shown_count: int = 0
         self._loading_older: bool = False
+        self._recent_widget: Static | None = None
 
     def show_placeholder(self, text: str = "Pick a chat from the left.") -> None:
         self.remove_children()
@@ -173,35 +174,40 @@ class HistoryView(VerticalScroll):
     def render_messages(self, messages: list) -> None:
         """Open the chat at its tail and lazy-load older messages on scroll-up.
 
-        Single Static blob keeps Textual's Strip cache small; rendering
-        only the last `_shown_count` messages avoids the multi-GB cache
-        that an entire 70k-chat blob would carry. When the user scrolls
-        to the top, `_load_more_older` re-renders with the next chunk
-        and adjusts `scroll_y` by the prepended height so the visible
-        viewport stays put.
+        Mounts the most-recent chunk as a Static with id "recent-chunk".
+        Older chunks are mounted ahead of it as separate Statics on each
+        scroll-up. After each load, scroll_to_widget(recent-chunk, top=True)
+        anchors the viewport at the same content the user was reading —
+        Textual handles the height math (no race against virtual_size).
 
         Trade-off (carried from #22): no per-row widgets, so the
         click-a-row-to-mark-range feature doesn't work — use the Window
         modal for date-range selection.
         """
         self._all_messages = list(messages)
-        self._shown_count = min(self.PREVIEW_CAP, len(self._all_messages))
-        self._render_current_window(scroll_to_bottom=True)
-
-    def _render_current_window(self, *, scroll_to_bottom: bool) -> None:
         self.remove_children()
         self._placeholder_visible = False
         if not self._all_messages:
             self.show_placeholder("No messages in this chat.")
             return
 
+        self._shown_count = min(self.PREVIEW_CAP, len(self._all_messages))
         visible = self._all_messages[-self._shown_count:]
         hidden = len(self._all_messages) - self._shown_count
 
+        blob = self._build_blob(visible, hidden_count=hidden)
+        # Use classes (not id) — remove_children() is async, so a rapid
+        # chat-switch can still have the previous "recent-chunk" in the
+        # node tree when we mount the next one. Classes coexist; ids don't.
+        self._recent_widget = Static(blob, classes="history-blob recent-chunk")
+        self.mount(self._recent_widget)
+        self.call_after_refresh(self.scroll_end, animate=False)
+
+    def _build_blob(self, visible: list, *, hidden_count: int = 0) -> Text:
         blob = Text()
-        if hidden:
+        if hidden_count:
             blob.append(
-                f"── {hidden:,} older messages — scroll up to load more ──\n\n",
+                f"── {hidden_count:,} older messages — scroll up to load more ──\n\n",
                 style="dim italic",
             )
 
@@ -225,19 +231,12 @@ class HistoryView(VerticalScroll):
             blob.append(f"{speaker}: ", style="bold")
             blob.append(body)
             blob.append("\n")
-
-        self.mount(Static(blob, classes="history-blob"))
-        if scroll_to_bottom:
-            # Jump to the most recent message. Layout has to settle first;
-            # scrolling immediately after .mount() lands at the top because
-            # the blob's height isn't computed yet.
-            self.call_after_refresh(self.scroll_end, animate=False)
+        return blob
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         # Reactive watcher Textual calls when scroll position changes.
-        # When we're near the top with more older messages cached, load
-        # the next chunk. The flag prevents re-entry while a load is
-        # being rendered and scroll is being restored.
+        # Load the next older chunk when the user scrolls to the top, but
+        # only while we have more cached and aren't already loading.
         if self._loading_older:
             return
         if not self._all_messages:
@@ -250,24 +249,35 @@ class HistoryView(VerticalScroll):
 
     def _load_more_older(self) -> None:
         self._loading_older = True
-        old_height = self.virtual_size.height
-        old_scroll = self.scroll_y
-        self._shown_count = min(
-            self._shown_count + self.LOAD_MORE_CHUNK,
-            len(self._all_messages),
-        )
-        self._render_current_window(scroll_to_bottom=False)
+        prev_shown = self._shown_count
+        new_shown = min(prev_shown + self.LOAD_MORE_CHUNK, len(self._all_messages))
+        # The chunk of older messages this load reveals: everything between
+        # what was shown before and what's shown now.
+        if prev_shown > 0:
+            older_slice = self._all_messages[-new_shown:-prev_shown]
+        else:
+            older_slice = self._all_messages[-new_shown:]
+        remaining_hidden = len(self._all_messages) - new_shown
+        older_blob = self._build_blob(older_slice, hidden_count=remaining_hidden)
+        self._shown_count = new_shown
 
-        def _restore_position() -> None:
-            # After the new blob's height is computed, push the viewport
-            # down by the height of the prepended content so the user's
-            # current view doesn't jump to the top.
-            new_height = self.virtual_size.height
-            delta = new_height - old_height
-            self.scroll_to(y=old_scroll + delta, animate=False)
+        recent = self._recent_widget
+        older_widget = Static(older_blob, classes="history-blob older")
+        if recent is not None and recent.is_mounted:
+            self.mount(older_widget, before=recent)
+        else:
+            self.mount(older_widget)
+
+        def _anchor_to_recent() -> None:
+            # Let Textual compute heights — no virtual_size race.
+            if recent is not None and recent.is_mounted:
+                try:
+                    self.scroll_to_widget(recent, top=True, animate=False)
+                except Exception:
+                    pass
             self._loading_older = False
 
-        self.call_after_refresh(_restore_position)
+        self.call_after_refresh(_anchor_to_recent)
 
     def _format_row(self, m) -> Text:
         ts = m.timestamp[11:19]  # HH:MM:SS
