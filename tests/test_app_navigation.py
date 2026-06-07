@@ -16,6 +16,7 @@ docs/superpowers/specs/2026-06-07-tui-navigation-design.md for the full intent.
 from __future__ import annotations
 
 import contextlib
+import importlib
 import sys
 import tempfile
 import unittest
@@ -24,6 +25,12 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures"))
 from build_sample_db import build  # noqa: E402
+
+try:
+    importlib.import_module("imessage_export.tui.app.app")
+    HAS_TUI = True
+except ImportError:
+    HAS_TUI = False
 
 
 @contextlib.contextmanager
@@ -54,6 +61,7 @@ async def _boot_and_select_first_chat(pilot, app):
         await pilot.pause(delay=0.05)
 
 
+@unittest.skipUnless(HAS_TUI, "[tui] extra not installed")
 class TestSidebarTypeToFilter(unittest.IsolatedAsyncioTestCase):
     async def test_typing_letter_when_list_focused_filters(self):
         tmpdir = tempfile.TemporaryDirectory()
@@ -109,6 +117,7 @@ class TestSidebarTypeToFilter(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(app.focused, lv)
 
 
+@unittest.skipUnless(HAS_TUI, "[tui] extra not installed")
 class TestActiveRegionBorder(unittest.IsolatedAsyncioTestCase):
     async def test_region_active_class_follows_focus(self):
         tmpdir = tempfile.TemporaryDirectory()
@@ -141,6 +150,7 @@ class TestActiveRegionBorder(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(history.has_class("region-active"))
 
 
+@unittest.skipUnless(HAS_TUI, "[tui] extra not installed")
 class TestStatusLineFocusChip(unittest.IsolatedAsyncioTestCase):
     async def test_chip_reflects_focused_region(self):
         tmpdir = tempfile.TemporaryDirectory()
@@ -165,6 +175,7 @@ class TestStatusLineFocusChip(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("[actions]", str(status.renderable))
 
 
+@unittest.skipUnless(HAS_TUI, "[tui] extra not installed")
 class TestHelpModalText(unittest.IsolatedAsyncioTestCase):
     async def test_help_modal_documents_new_bindings(self):
         tmpdir = tempfile.TemporaryDirectory()
