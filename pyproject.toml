@@ -29,8 +29,8 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Repository = "https://github.com/benjaminloschen/imessage-history"
-Issues    = "https://github.com/benjaminloschen/imessage-history/issues"
+Repository = "https://github.com/loschenbd/imessage-history"
+Issues    = "https://github.com/loschenbd/imessage-history/issues"
 
 [project.scripts]
 imessage-export = "imessage_export:main"
