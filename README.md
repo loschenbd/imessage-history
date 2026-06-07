@@ -37,10 +37,32 @@ what it does and doesn't do:
 - **`contacts.csv` is your private mapping.** Phone numbers and names. Also
   gitignored. Use `contacts.example.csv` as the shape reference.
 - **Pasting outputs into a hosted LLM sends that conversation to a third
-  party.** If you do this, you've moved the data off your machine. For
-  sensitive threads, run a local model (Ollama, LM Studio) instead.
+  party.** If you do this, you've moved the data off your machine.
 - **Reporting bugs?** Don't attach real exports to GitHub issues. Reproduce
   with a synthetic / heavily redacted fixture, or describe the failure mode.
+
+### Risk mitigation when using LLMs
+
+Ordered by impact:
+
+1. **Use a local model.** [Ollama](https://ollama.com/) with Llama 3 / Mistral
+   / Gemma, or [LM Studio](https://lmstudio.ai/), keep the conversation on
+   your machine. This is the only option that fully sidesteps third-party
+   retention and ToS concerns. Recommended for any thread you'd be unhappy to
+   see leaked.
+2. **Redact before pasting.** If you must use a hosted model, find-and-replace
+   names, phone numbers, and identifying details first. The `author_label`
+   column makes this easy — replace `Alice` / `Bob` with `Person A` /
+   `Person B` and strip the `sender_handle` column.
+3. **Read the ToS.** Hosted-model retention and training policies vary by
+   provider, plan, and account setting:
+   - **Anthropic Claude (consumer):** does not train on chats by default for
+     paid plans; check current policy at the time of use.
+   - **OpenAI ChatGPT:** training on conversations is opt-out for free /
+     Plus, and off by default for Team / Enterprise / API.
+   - **Google Gemini:** policy varies by region and account type.
+
+   Policies change. Verify before pasting anything sensitive.
 
 If any of the above is a problem for your use case, this is the wrong tool.
 
