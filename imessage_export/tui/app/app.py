@@ -179,6 +179,10 @@ class ImessageExportApp(App):
             s.remove()
         history.render_messages(event.messages)
         self._refresh_status()
+        # Move focus to the first message row so the user can arrow / press /.
+        rows = list(history.query(".message-row"))
+        if rows:
+            rows[0].focus()
 
     # ------------------------------------------------------------------
     # Task 7: Range marks

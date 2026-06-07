@@ -310,5 +310,23 @@ class TestSidebarTypeToFilter(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(app.focused, lv)
 
 
+class TestAutoFocusHistoryAfterChatSelect(unittest.IsolatedAsyncioTestCase):
+    async def test_focus_moves_to_first_message_after_load(self):
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        with _patched_app(tmpdir.name):
+            from imessage_export.tui.app.app import ImessageExportApp
+            from imessage_export.tui.app.widgets import HistoryView
+
+            app = ImessageExportApp()
+            async with app.run_test() as pilot:
+                await _boot_and_select_first_chat(pilot, app)
+                history = app.query_one(HistoryView)
+                rows = list(history.query(".message-row"))
+                self.assertGreater(len(rows), 0)
+                # After load + render, focus should be on the first message row.
+                self.assertIs(app.focused, rows[0])
+
+
 if __name__ == "__main__":
     unittest.main()
