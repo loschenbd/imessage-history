@@ -152,6 +152,11 @@ class HistoryView(VerticalScroll):
             row.data_msg_id = m.message_id  # type: ignore[attr-defined]
             self.mount(row)
 
+        # Jump to the most recent message. Has to wait for the layout pass
+        # — scrolling immediately after .mount() lands at the top because
+        # children don't have computed sizes yet.
+        self.call_after_refresh(self.scroll_end, animate=False)
+
     def _format_row(self, m) -> Text:
         ts = m.timestamp[11:19]  # HH:MM:SS
         speaker = m.author_label or ""
