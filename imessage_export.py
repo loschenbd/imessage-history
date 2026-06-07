@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import copy
 import csv
+import hashlib
 import json
 import os
 import re
@@ -1259,24 +1260,72 @@ def _run(args, conn) -> int:
         unit=unit,
     )
 
-    # Output directory: exports/<contact-or-group>/<YYYY-MM-DD>/
+    # Build the redactor if asked. Both --redact and --redact-only enable it.
+    redactor = None
+    red_messages: list[Message] | None = None
+    red_metadata: dict | None = None
+    if args.redact or args.redact_only:
+        extra_names = []
+        if args.redact_names_file:
+            try:
+                with open(args.redact_names_file) as f:
+                    extra_names = [ln.strip() for ln in f
+                                   if ln.strip() and not ln.lstrip().startswith("#")]
+            except OSError as e:
+                raise SystemExit(f"Cannot read --redact-names-file {args.redact_names_file}: {e}")
+        rcfg = RedactionConfig(
+            me_name=args.me_name,
+            extra_names=extra_names,
+            redact_phones=not args.no_redact_phones,
+            redact_emails=not args.no_redact_emails,
+            redact_urls=not args.no_redact_urls,
+        )
+        redactor     = Redactor(messages, metadata, contacts, rcfg)
+        red_messages = redactor.redact_messages()
+        red_metadata = redactor.redact_metadata()
+
+    # Output directory: exports/<label>/<YYYY-MM-DD>/.
     # Date = window start if a window was given, else the actual first message's
     # date, else today. Re-exporting the same (label, date) overwrites.
-    label = chat_label(metadata)
+    # In --redact-only mode, folder uses the pseudonymized label + a stable
+    # 4-char hash of chat_ids so distinct chats don't collide on "Person B".
+    # slugify() would mash the space into a dash; for the redacted folder name
+    # we bypass it so "Person B-a3f9" stays readable.
     win = metadata["window"]
     date_str = (
         (win.get("local_start") or "")[:10]
         or (metadata.get("actual_first_local") or "")[:10]
         or datetime.now().strftime("%Y-%m-%d")
     )
-    out_dir = Path(args.output_dir) / slugify(label) / date_str
+    if args.redact_only and redactor is not None:
+        chat_ids_str = ",".join(str(c) for c in metadata["chat_ids"])
+        chash = hashlib.sha1(chat_ids_str.encode()).hexdigest()[:4]
+        folder_name = f"{redactor.chat_label()}-{chash}"
+    else:
+        folder_name = slugify(chat_label(metadata))
+    out_dir = Path(args.output_dir) / folder_name / date_str
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    write_csv(out_dir / "conversation.csv", messages)
-    write_json(out_dir / "conversation.json", messages, metadata)
-    write_txt(out_dir / "conversation.txt", messages)
-    write_markdown(out_dir / "conversation.md", messages, metadata)
-    write_ai_ready(out_dir / "conversation_ai_ready.txt", messages, metadata)
+    # Write the originals UNLESS in --redact-only mode.
+    if not args.redact_only:
+        write_csv      (out_dir / "conversation.csv",          messages)
+        write_json     (out_dir / "conversation.json",         messages, metadata)
+        write_txt      (out_dir / "conversation.txt",          messages)
+        write_markdown (out_dir / "conversation.md",           messages, metadata)
+        write_ai_ready (out_dir / "conversation_ai_ready.txt", messages, metadata)
+
+    # Write the redacted set if we built a redactor. We keep the "_redacted"
+    # suffix even in --redact-only mode so the file names always signal that
+    # the contents have been pseudonymized.
+    if redactor is not None:
+        write_csv      (out_dir / "conversation_redacted.csv",          red_messages)
+        write_json     (out_dir / "conversation_redacted.json",         red_messages, red_metadata)
+        write_txt      (out_dir / "conversation_redacted.txt",          red_messages)
+        write_markdown (out_dir / "conversation_redacted.md",           red_messages, red_metadata)
+        write_ai_ready (out_dir / "conversation_redacted_ai_ready.txt", red_messages, red_metadata)
+        with open(out_dir / "pseudonym_map.json", "w") as f:
+            json.dump(redactor.pseudonym_map(), f, indent=2, ensure_ascii=False)
+
     write_prompt(out_dir / "analysis_prompt.txt")
 
     print(f"Exported {len(messages)} messages → {out_dir}")

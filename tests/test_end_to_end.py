@@ -151,5 +151,69 @@ class EndToEndExportTests(unittest.TestCase):
             self.assertEqual(f.stat().st_mode & 0o777, 0o600, f"{f.name} not 600")
 
 
+class RedactionEndToEndTests(EndToEndExportTests):
+    """Run the existing fixture export with --redact / --redact-only."""
+
+    def _redacted_run(self, extra=()):
+        argv = [
+            "--db", str(self.db_path),
+            "--chat-id", "1",
+            "--me-name", "Tester",
+            "--output-dir", str(self.out_dir),
+            *extra,
+        ]
+        rc = ie.main(argv)
+        self.assertEqual(rc, 0)
+
+    def _resolve_first_export_dir(self) -> Path:
+        contacts = list(self.out_dir.iterdir())
+        self.assertGreaterEqual(len(contacts), 1)
+        dates = list(contacts[0].iterdir())
+        return dates[0]
+
+    def test_redact_flag_produces_both_versions(self):
+        self._redacted_run(extra=["--redact"])
+        out = self._resolve_first_export_dir()
+        for name in (
+            "conversation.txt", "conversation_redacted.txt",
+            "conversation.json", "conversation_redacted.json",
+            "conversation.csv", "conversation_redacted.csv",
+            "conversation.md", "conversation_redacted.md",
+            "conversation_ai_ready.txt", "conversation_redacted_ai_ready.txt",
+            "pseudonym_map.json",
+        ):
+            self.assertTrue((out / name).exists(), f"{name} missing")
+
+    def test_redact_only_skips_originals(self):
+        self._redacted_run(extra=["--redact-only"])
+        out = self._resolve_first_export_dir()
+        for name in ("conversation.txt", "conversation.json", "conversation.csv",
+                     "conversation.md", "conversation_ai_ready.txt"):
+            self.assertFalse((out / name).exists(), f"{name} should not exist in redact-only mode")
+        for name in ("conversation_redacted.txt", "pseudonym_map.json"):
+            self.assertTrue((out / name).exists(), f"{name} missing")
+
+    def test_redact_only_folder_includes_hash(self):
+        self._redacted_run(extra=["--redact-only"])
+        contacts = list(self.out_dir.iterdir())
+        self.assertEqual(len(contacts), 1)
+        name = contacts[0].name
+        self.assertTrue(name.startswith("Person"), f"unexpected folder name: {name}")
+        self.assertRegex(name, r"^Person [A-Z]+-[0-9a-f]{4}$")
+
+    def test_redacted_csv_has_no_real_handle(self):
+        self._redacted_run(extra=["--redact"])
+        out = self._resolve_first_export_dir()
+        red = (out / "conversation_redacted.csv").read_text()
+        self.assertNotIn("+15551234567", red)
+        self.assertIn("Person",          red)
+
+    def test_pseudonym_map_perms_are_600(self):
+        self._redacted_run(extra=["--redact"])
+        out = self._resolve_first_export_dir()
+        pmap = out / "pseudonym_map.json"
+        self.assertEqual(pmap.stat().st_mode & 0o777, 0o600)
+
+
 if __name__ == "__main__":
     unittest.main()
