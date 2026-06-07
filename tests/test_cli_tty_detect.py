@@ -73,5 +73,27 @@ class TTYDetectTests(unittest.TestCase):
         self.assertEqual(rc, 0)
 
 
+class ThemeFlagTests(unittest.TestCase):
+    def test_theme_flag_parsed(self):
+        from imessage_export import cli
+        args = cli.build_parser().parse_args(["--theme", "terafox", "--chat-id", "42"])
+        self.assertEqual(args.theme, "terafox")
+
+    def test_theme_flag_accepts_auto(self):
+        from imessage_export import cli
+        args = cli.build_parser().parse_args(["--theme", "auto", "--chat-id", "42"])
+        self.assertEqual(args.theme, "auto")
+
+    def test_theme_flag_rejects_unknown(self):
+        from imessage_export import cli
+        with self.assertRaises(SystemExit):
+            cli.build_parser().parse_args(["--theme", "foo", "--chat-id", "42"])
+
+    def test_theme_flag_default_is_none(self):
+        from imessage_export import cli
+        args = cli.build_parser().parse_args(["--chat-id", "42"])
+        self.assertIsNone(args.theme)
+
+
 if __name__ == "__main__":
     unittest.main()

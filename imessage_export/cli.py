@@ -100,6 +100,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Force the Textual app even when other flags are present.",
     )
+    tui.add_argument(
+        "--theme",
+        choices=("dawnfox", "terafox", "auto"),
+        default=None,
+        help="Override the active color theme. 'auto' means ignore "
+             "any persisted preference and re-detect from macOS. "
+             "Default: persisted preference or macOS auto-detect.",
+    )
 
     red = p.add_argument_group("redaction / pseudonymization")
     red.add_argument("--redact", action="store_true",
