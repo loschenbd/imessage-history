@@ -3,9 +3,14 @@
 Uses Textual's `Pilot` harness against the fixture chat.db. Not asserting
 rendering pixel-by-pixel — only that the wiring carries data from
 sidebar click to export completion.
+
+Skips when the `[tui]` extras (textual / rich / questionary) aren't
+installed — CI doesn't install them, contributors hacking on the core
+shouldn't have to either.
 """
 from __future__ import annotations
 
+import importlib.util
 import sys
 import tempfile
 import unittest
@@ -16,7 +21,13 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures"))
 from build_sample_db import build  # noqa: E402
 
+_TUI_AVAILABLE = all(
+    importlib.util.find_spec(name) is not None
+    for name in ("textual", "rich", "questionary")
+)
 
+
+@unittest.skipUnless(_TUI_AVAILABLE, "[tui] extras (textual/rich/questionary) not installed")
 class TestAppSmoke(unittest.IsolatedAsyncioTestCase):
     async def test_select_chat_loads_history_and_marks_range(self):
         tmpdir = tempfile.TemporaryDirectory()
