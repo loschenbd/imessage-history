@@ -6,13 +6,22 @@ malformed-contacts UX paths.
 """
 from __future__ import annotations
 
+import importlib
 import io
 import sys
 import unittest
 
-from imessage_export.tui import errors, theme
+try:
+    errors = importlib.import_module("imessage_export.tui.errors")
+    theme = importlib.import_module("imessage_export.tui.theme")
+    HAS_TUI = True
+except ImportError:
+    errors = None
+    theme = None
+    HAS_TUI = False
 
 
+@unittest.skipUnless(HAS_TUI, "[tui] extra not installed")
 class ErrorRendererSmokeTests(unittest.TestCase):
 
     def setUp(self):
@@ -53,6 +62,7 @@ class ErrorRendererSmokeTests(unittest.TestCase):
         self.assertIn("bad column count", out)
 
 
+@unittest.skipUnless(HAS_TUI, "[tui] extra not installed")
 class ErrorRendererStderrRoutingTests(unittest.TestCase):
 
     def setUp(self):

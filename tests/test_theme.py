@@ -1,13 +1,20 @@
 """Unit tests for the theme resolver + Rich Console builder."""
 from __future__ import annotations
 
+import importlib
 import subprocess
 import unittest
 from unittest import mock
 
-from imessage_export.tui import theme
+try:
+    theme = importlib.import_module("imessage_export.tui.theme")
+    HAS_TUI = True
+except ImportError:
+    theme = None
+    HAS_TUI = False
 
 
+@unittest.skipUnless(HAS_TUI, "[tui] extra not installed")
 class PaletteCompletenessTests(unittest.TestCase):
     REQUIRED_KEYS = {
         "bg", "bg_alt", "bg_3", "fg",
@@ -35,6 +42,7 @@ class PaletteCompletenessTests(unittest.TestCase):
                 )
 
 
+@unittest.skipUnless(HAS_TUI, "[tui] extra not installed")
 class MakeConsoleTests(unittest.TestCase):
     def test_console_registers_accent_style(self):
         console = theme.make_console(theme.DAWNFOX)
@@ -51,6 +59,7 @@ class MakeConsoleTests(unittest.TestCase):
             console.get_style(name)
 
 
+@unittest.skipUnless(HAS_TUI, "[tui] extra not installed")
 class DetectAppearanceTests(unittest.TestCase):
     def _completed(self, returncode: int, stdout: str = "") -> subprocess.CompletedProcess:
         return subprocess.CompletedProcess(
@@ -80,6 +89,7 @@ class DetectAppearanceTests(unittest.TestCase):
             self.assertEqual(theme.detect_appearance(), "light")
 
 
+@unittest.skipUnless(HAS_TUI, "[tui] extra not installed")
 class ResolveThemeNameTests(unittest.TestCase):
     def test_cli_wins(self):
         with mock.patch.object(theme, "detect_appearance", return_value="light"):
@@ -134,6 +144,7 @@ class ResolveThemeNameTests(unittest.TestCase):
         self.assertEqual(name, "terafox")
 
 
+@unittest.skipUnless(HAS_TUI, "[tui] extra not installed")
 class ResolvePaletteTests(unittest.TestCase):
     def test_returns_dict_matching_resolved_name(self):
         with mock.patch.object(theme, "resolve_theme_name", return_value="dawnfox"):
@@ -142,6 +153,7 @@ class ResolvePaletteTests(unittest.TestCase):
             self.assertIs(theme.resolve_palette(), theme.TERAFOX)
 
 
+@unittest.skipUnless(HAS_TUI, "[tui] extra not installed")
 class GetConsoleTests(unittest.TestCase):
     def test_get_console_is_singleton_per_palette(self):
         theme._reset_console_for_tests()
@@ -150,6 +162,7 @@ class GetConsoleTests(unittest.TestCase):
         self.assertIs(c1, c2)
 
 
+@unittest.skipUnless(HAS_TUI, "[tui] extra not installed")
 class RegisterTextualThemesTests(unittest.TestCase):
     def test_register_textual_themes_idempotent(self):
         """Re-registering must not raise — on_mount can run twice in tests."""
