@@ -887,7 +887,7 @@ def format_message_body(m: Message) -> str:
     return " ".join(parts).strip()
 
 
-def render_txt_message(m: "Message", *, time_format: str = "full",
+def render_txt_message(m: Message, *, time_format: str = "full",
                        indent: str = "    ") -> str:
     """Render one message as one or more plain-text lines.
 
@@ -914,27 +914,39 @@ def render_txt_message(m: "Message", *, time_format: str = "full",
     return "\n".join(lines).rstrip()
 
 
-def write_txt(path: Path, messages: list["Message"]):
+def _write_txt_event_stream(f, messages, *, time_format: str) -> None:
+    """Shared event-stream walker for the two plain-text writers.
+
+    Both `write_txt` and `write_ai_ready` emit the same `── ... ──` day
+    headers and gap markers; they differ only in whether each message
+    line carries `[YYYY-MM-DD HH:MM:SS]` (AI-ready) or `[HH:MM:SS]`
+    (human txt). The markdown writer uses different separator syntax
+    and is intentionally NOT consolidated here.
+    """
+    first = True
+    for event in iter_render_events(messages):
+        kind = event[0]
+        if kind == "day":
+            if not first:
+                f.write("\n")
+            f.write(f"── {format_day_label(event[1])} ──\n\n")
+            first = False
+        elif kind == "gap":
+            f.write(f"\n── {format_gap(event[1])} ──\n\n")
+        else:
+            f.write(render_txt_message(event[1], time_format=time_format) + "\n")
+            first = False
+
+
+def write_txt(path: Path, messages: list[Message]):
     """Plain-text export with day headers, gap markers, and time-only line
     prefixes. The full date for each line is carried by the day header
     above it."""
     with path.open("w") as f:
-        first = True
-        for event in iter_render_events(messages):
-            kind = event[0]
-            if kind == "day":
-                if not first:
-                    f.write("\n")
-                f.write(f"── {format_day_label(event[1])} ──\n\n")
-                first = False
-            elif kind == "gap":
-                f.write(f"\n── {format_gap(event[1])} ──\n\n")
-            else:
-                f.write(render_txt_message(event[1], time_format="time") + "\n")
-                first = False
+        _write_txt_event_stream(f, messages, time_format="time")
 
 
-def write_ai_ready(path: Path, messages: list["Message"], metadata: dict):
+def write_ai_ready(path: Path, messages: list[Message], metadata: dict):
     """LLM-fed export. Same day-header / gap-marker / indented-continuation
     conventions as conversation.txt, but EACH MESSAGE LINE keeps the full
     [YYYY-MM-DD HH:MM:SS] prefix so an LLM never has to scan upward for the
@@ -973,19 +985,7 @@ def write_ai_ready(path: Path, messages: list["Message"], metadata: dict):
     ]
     with path.open("w") as f:
         f.write("\n".join(header))
-        first = True
-        for event in iter_render_events(messages):
-            kind = event[0]
-            if kind == "day":
-                if not first:
-                    f.write("\n")
-                f.write(f"── {format_day_label(event[1])} ──\n\n")
-                first = False
-            elif kind == "gap":
-                f.write(f"\n── {format_gap(event[1])} ──\n\n")
-            else:
-                f.write(render_txt_message(event[1], time_format="full") + "\n")
-                first = False
+        _write_txt_event_stream(f, messages, time_format="full")
         f.write("\n".join(footer) + "\n")
 
 
