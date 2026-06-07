@@ -874,7 +874,11 @@ def format_message_body(m: Message) -> str:
         parts.append(m.text)
 
     if m.is_edited and m.kind == "message":
-        parts.insert(0, "[edited]")
+        has_attachment_to_render = bool(m.attachment_filenames) or bool(m.has_attachment)
+        if parts or has_attachment_to_render:
+            parts.insert(0, "[edited]")
+        else:
+            parts.append("[edited; text not available]")
 
     if m.attachment_filenames:
         parts.append(f"[Attachments: {', '.join(m.attachment_filenames)}]")

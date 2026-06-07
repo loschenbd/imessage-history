@@ -15,7 +15,7 @@ from imessage_export import (
 @dataclass
 class Stub:
     """Minimal stand-in for Message — only the fields the renderers read."""
-    timestamp: str
+    timestamp: str = "2026-06-06 09:00:00"
     author_label: str = "Ben"
     text: str = ""
     is_from_me: int = 1
@@ -102,6 +102,33 @@ class IterRenderEventsTests(unittest.TestCase):
 
     def test_gap_threshold_constant_value(self):
         self.assertEqual(GAP_THRESHOLD_SECONDS, 30 * 60)
+
+
+from imessage_export import format_message_body
+
+
+class FormatMessageBodyEditedEmptyTests(unittest.TestCase):
+    def test_edited_with_text_keeps_old_marker(self):
+        m = Stub(text="hello", is_edited=1)
+        self.assertEqual(format_message_body(m), "[edited] hello")
+
+    def test_edited_with_no_text_no_attachment_uses_explicit_marker(self):
+        m = Stub(text="", is_edited=1)
+        self.assertEqual(format_message_body(m), "[edited; text not available]")
+
+    def test_edited_with_attachment_only_keeps_old_marker(self):
+        m = Stub(
+            text="", is_edited=1, has_attachment=1,
+            attachment_filenames=["photo.jpg"],
+        )
+        self.assertEqual(
+            format_message_body(m),
+            "[edited] [Attachments: photo.jpg]",
+        )
+
+    def test_unedited_empty_message_unchanged(self):
+        m = Stub(text="", is_edited=0)
+        self.assertEqual(format_message_body(m), "")
 
 
 if __name__ == "__main__":
