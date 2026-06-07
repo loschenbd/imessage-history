@@ -30,6 +30,16 @@ from .defaults import Defaults, load as load_defaults, save as save_defaults
 
 console = Console()
 
+TOTAL_STEPS = 7
+
+
+def _step_banner(n: int, label: str):
+    """Print a subtle step indicator above each prompt."""
+    console.print(
+        f"\n[dim]──[/dim] [bold cyan]Step {n}/{TOTAL_STEPS}[/bold cyan]  "
+        f"[white]{label}[/white]  [dim]──[/dim]"
+    )
+
 
 def run() -> int:
     """Drive the wizard. Returns process exit code."""
@@ -86,11 +96,13 @@ def run() -> int:
     )
     conn = open_db(Path(args.db))
     try:
-        rc = _run(args, conn)
+        with console.status("[bold cyan]Exporting…[/bold cyan]", spinner="dots"):
+            rc = _run(args, conn)
     finally:
         conn.close()
 
     if rc == 0:
+        console.print("\n[bold green]✓[/bold green] [white]Export complete.[/white]")
         _maybe_show_preview(output_dir, info, window, redact_choices)
     return rc
 
@@ -101,16 +113,23 @@ def run() -> int:
 
 
 def _welcome():
-    console.print(Panel.fit(
-        "[bold]imessage-export[/bold] — interactive mode\n"
-        "[dim]Everything stays on this machine. No network calls.\n"
+    console.print()  # leading whitespace
+    console.print(Panel(
+        "[bold cyan]imessage-export[/bold cyan]  [dim]·[/dim]  interactive mode\n\n"
+        "[white]Export a single conversation from your local Messages database\n"
+        "into AI-ready files. [bold]Everything stays on this machine.[/bold][/white]\n\n"
+        "[dim]Press Ctrl+C at any prompt to cancel.\n"
         "Run with --help to see the headless flag surface.[/dim]",
+        title="[bold]Welcome[/bold]",
+        title_align="left",
         border_style="cyan",
+        padding=(1, 2),
     ))
 
 
 def _step_pick_chat(conn, defaults: Defaults) -> Optional[int]:
     """Type-to-filter chat picker. No pre-highlighted default."""
+    _step_banner(1, "Pick a chat")
     rows = list_recent_chats(conn, 100)
     if not rows:
         console.print("[red]No chats found in chat.db.[/red]")
@@ -146,6 +165,7 @@ def _format_chat_row(r: dict) -> str:
 
 def _step_pick_window(info: dict):
     """Type-to-filter time window picker. No pre-highlighted default."""
+    _step_banner(2, "Choose a time window")
     mode = questionary.select(
         "Time window? (type to filter)",
         choices=[
@@ -165,9 +185,40 @@ def _step_pick_window(info: dict):
         d = questionary.text("Date (YYYY-MM-DD)", default=today_str).ask()
         if not d:
             return None
-        start = questionary.text("Start time (HH:MM, optional)", default="").ask()
-        end = questionary.text("End time (HH:MM, optional)", default="").ask()
-        return {"mode": "day", "date": d, "start_time": start or None, "end_time": end or None}
+
+        preset = questionary.select(
+            "Time of day? (type to filter)",
+            choices=[
+                questionary.Choice("All day (no time filter)",            value="all"),
+                questionary.Choice("Morning   (12:00 AM – 12:00 PM)",     value="morning"),
+                questionary.Choice("Afternoon (12:00 PM – 6:00 PM)",      value="afternoon"),
+                questionary.Choice("Evening   (6:00 PM – 12:00 AM)",      value="evening"),
+                questionary.Choice("Custom range",                        value="custom"),
+            ],
+            use_search_filter=True,
+            use_jk_keys=False,
+        ).ask()
+        if preset is None:
+            return None
+
+        if preset == "all":
+            start_time = None
+            end_time   = None
+        elif preset == "morning":
+            start_time, end_time = "00:00", "12:00"
+        elif preset == "afternoon":
+            start_time, end_time = "12:00", "18:00"
+        elif preset == "evening":
+            start_time, end_time = "18:00", "23:59"
+        else:  # custom
+            start_time = _ask_time("Start time", "9am")
+            if start_time is None:
+                return None
+            end_time = _ask_time("End time", "5pm")
+            if end_time is None:
+                return None
+
+        return {"mode": "day", "date": d, "start_time": start_time, "end_time": end_time}
 
     if mode == "range":
         f = questionary.text("From date (YYYY-MM-DD)").ask()
@@ -187,7 +238,23 @@ def _step_pick_window(info: dict):
     return {"mode": "all"}
 
 
+def _ask_time(label: str, example: str) -> Optional[str]:
+    """Ask for a time. Accepts 9am, 12pm, 14:30, noon, midnight. Loops on parse error."""
+    from ..window import parse_time_12h
+    while True:
+        raw = questionary.text(f"{label} (e.g. {example})").ask()
+        if raw is None:
+            return None
+        if not raw.strip():
+            return None  # treat empty as no bound
+        try:
+            return parse_time_12h(raw)
+        except ValueError:
+            console.print(f"[yellow]Didn't understand {raw!r} — try '9am' or '14:30'.[/yellow]")
+
+
 def _step_contacts(defaults: Defaults) -> Optional[Path]:
+    _step_banner(3, "Contacts file")
     default_value = defaults.contacts_path or (
         str(Path.cwd() / "contacts.csv") if (Path.cwd() / "contacts.csv").exists() else ""
     )
@@ -205,6 +272,7 @@ def _step_contacts(defaults: Defaults) -> Optional[Path]:
 
 
 def _step_output_dir(defaults: Defaults) -> Path:
+    _step_banner(4, "Output directory")
     raw = questionary.path(
         "Output directory",
         default=defaults.output_dir or str(Path.cwd() / "exports"),
@@ -213,6 +281,7 @@ def _step_output_dir(defaults: Defaults) -> Path:
 
 
 def _step_me_name(defaults: Defaults) -> str:
+    _step_banner(5, "Your name")
     raw = questionary.text(
         "Your name (label for messages you sent)",
         default=defaults.me_name or "Me",
@@ -222,6 +291,7 @@ def _step_me_name(defaults: Defaults) -> str:
 
 def _step_redact() -> Optional[dict]:
     """Seventh wizard step: redaction. None = cancel; {} = decline."""
+    _step_banner(6, "Redaction")
     mode = questionary.select(
         "Redact identifiers and PII before writing? (type to filter)",
         choices=[
@@ -265,17 +335,29 @@ def _step_redact() -> Optional[dict]:
 
 
 def _step_confirm(info: dict, window, contacts, output_dir, me_name, redact_choices) -> bool:
+    _step_banner(7, "Confirm and run")
+    from rich.table import Table
+
     chat_label = info.get("label") or info.get("display_name") or info.get("chat_identifier") or "?"
-    msg_count = info.get("msg_count", "?")
-    summary = (
-        f"[bold]Chat[/bold]: {chat_label}  ([dim]{msg_count} msgs[/dim])\n"
-        f"[bold]Window[/bold]: {_window_summary(window)}\n"
-        f"[bold]Contacts[/bold]: {contacts or '(none)'}\n"
-        f"[bold]Output[/bold]: {output_dir}\n"
-        f"[bold]Me[/bold]: {me_name}\n"
-        f"[bold]Redact[/bold]: {_redact_summary(redact_choices)}"
-    )
-    console.print(Panel(summary, title="Confirm export", border_style="green"))
+    msg_count = info.get("msg_count", 0)
+
+    t = Table.grid(padding=(0, 2))
+    t.add_column(style="bold cyan", justify="right")
+    t.add_column()
+    t.add_row("Chat",     f"{chat_label}  [dim]({msg_count} msgs)[/dim]")
+    t.add_row("Window",   _window_summary(window))
+    t.add_row("Contacts", str(contacts) if contacts else "[dim](none)[/dim]")
+    t.add_row("Output",   f"[underline]{output_dir}[/underline]")
+    t.add_row("Me",       me_name)
+    t.add_row("Redact",   _redact_summary(redact_choices))
+
+    console.print(Panel(
+        t,
+        title="[bold]Confirm export[/bold]",
+        title_align="left",
+        border_style="green",
+        padding=(1, 2),
+    ))
     return bool(questionary.confirm("Run export?", default=True).ask())
 
 

@@ -45,6 +45,47 @@ def parse_time(s: str) -> datetime:
     raise ValueError(f"Invalid time {s!r}; expected HH:MM or HH:MM:SS")
 
 
+def parse_time_12h(s: str) -> str:
+    """Parse a user-friendly time string to 24-hour HH:MM.
+
+    Accepts:
+      "9am", "9:00am", "9 am", "9:30am"
+      "12pm", "12:00pm" (noon)
+      "12am" (midnight)
+      "14:00", "14:30:00" (24-hour passthrough)
+      "noon", "midnight"
+
+    Returns: 24-hour "HH:MM" string. Raises ValueError on unparseable input.
+    """
+    import re
+    s = s.strip().lower().replace(" ", "")
+    if s == "noon":
+        return "12:00"
+    if s == "midnight":
+        return "00:00"
+    # 24-hour HH:MM or HH:MM:SS
+    m = re.fullmatch(r"(\d{1,2}):(\d{2})(?::\d{2})?", s)
+    if m:
+        h, mn = int(m.group(1)), int(m.group(2))
+        if 0 <= h <= 23 and 0 <= mn <= 59:
+            return f"{h:02d}:{mn:02d}"
+        raise ValueError(f"out of range: {s}")
+    # 12-hour with am/pm
+    m = re.fullmatch(r"(\d{1,2})(?::(\d{2}))?(am|pm)", s)
+    if m:
+        h = int(m.group(1))
+        mn = int(m.group(2) or "0")
+        suffix = m.group(3)
+        if h < 1 or h > 12 or mn < 0 or mn > 59:
+            raise ValueError(f"out of range: {s}")
+        if suffix == "am":
+            h = 0 if h == 12 else h
+        else:  # pm
+            h = 12 if h == 12 else h + 12
+        return f"{h:02d}:{mn:02d}"
+    raise ValueError(f"unrecognized time format: {s!r}")
+
+
 def parse_datetime(s: str) -> datetime:
     # Accept 'YYYY-MM-DD HH:MM' / 'YYYY-MM-DD HH:MM:SS' / ISO 'YYYY-MM-DDTHH:MM:SS'
     s = s.replace("T", " ")
