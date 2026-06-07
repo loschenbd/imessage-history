@@ -88,6 +88,40 @@ class Sidebar(Vertical):
                 self.post_message(self.ChatSelected(chat_id))
                 break
 
+    def on_key(self, event) -> None:
+        """Type-to-filter: redirect printable keystrokes from the list to the filter.
+
+        - When the list has focus and the user types a printable single character,
+          focus the filter input and forward the character via insert_text_at_cursor.
+        - When the filter has focus and Esc is pressed, clear the filter and refocus
+          the list. Esc events from widgets outside the sidebar pass through (the
+          `focused is filter_input` guard ensures we don't swallow them).
+        - Arrow keys are non-printable (`event.character is None`), so they always
+          flow through to whatever widget currently has focus.
+        """
+        list_view = self.query_one("#sidebar-list", ListView)
+        filter_input = self.query_one("#sidebar-filter", Input)
+        focused = self.app.focused
+
+        if (
+            focused is list_view
+            and event.character
+            and len(event.character) == 1
+            and event.character.isprintable()
+        ):
+            filter_input.focus()
+            filter_input.insert_text_at_cursor(event.character)
+            event.prevent_default()
+            event.stop()
+            return
+
+        if focused is filter_input and event.key == "escape":
+            filter_input.value = ""
+            list_view.focus()
+            event.prevent_default()
+            event.stop()
+            return
+
 
 class HistoryView(VerticalScroll):
     """Scrollable rendered chat history.

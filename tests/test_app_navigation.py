@@ -255,5 +255,60 @@ class TestSwitchToEmptyChat(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("No messages in this chat", str(placeholders[0].renderable))
 
 
+class TestSidebarTypeToFilter(unittest.IsolatedAsyncioTestCase):
+    async def test_typing_letter_when_list_focused_filters(self):
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        with _patched_app(tmpdir.name):
+            from imessage_export.tui.app.app import ImessageExportApp
+            from imessage_export.tui.app.widgets import Sidebar
+            from textual.widgets import Input, ListView
+
+            app = ImessageExportApp()
+            async with app.run_test() as pilot:
+                for _ in range(20):
+                    sidebar = app.query_one(Sidebar)
+                    if sidebar._all_chats:
+                        break
+                    await pilot.pause(delay=0.05)
+                sidebar = app.query_one(Sidebar)
+                lv = sidebar.query_one(ListView)
+                lv.focus()
+                await pilot.pause()
+                await pilot.press("a")
+                await pilot.pause()
+                filter_input = sidebar.query_one("#sidebar-filter", Input)
+                self.assertEqual(app.focused, filter_input)
+                self.assertEqual(filter_input.value, "a")
+
+    async def test_esc_in_filter_clears_and_refocuses_list(self):
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        with _patched_app(tmpdir.name):
+            from imessage_export.tui.app.app import ImessageExportApp
+            from imessage_export.tui.app.widgets import Sidebar
+            from textual.widgets import Input, ListView
+
+            app = ImessageExportApp()
+            async with app.run_test() as pilot:
+                for _ in range(20):
+                    sidebar = app.query_one(Sidebar)
+                    if sidebar._all_chats:
+                        break
+                    await pilot.pause(delay=0.05)
+                sidebar = app.query_one(Sidebar)
+                lv = sidebar.query_one(ListView)
+                lv.focus()
+                await pilot.pause()
+                await pilot.press("x")
+                await pilot.pause()
+                filter_input = sidebar.query_one("#sidebar-filter", Input)
+                self.assertEqual(filter_input.value, "x")
+                await pilot.press("escape")
+                await pilot.pause()
+                self.assertEqual(filter_input.value, "")
+                self.assertEqual(app.focused, lv)
+
+
 if __name__ == "__main__":
     unittest.main()
