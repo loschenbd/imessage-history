@@ -63,6 +63,33 @@ label, and most-recently-used chat across runs.
 
 Prefer the linear wizard from Phase 1? Run `imessage-export --wizard`.
 
+## Theming
+
+The TUI ships with two palettes from
+[EdenEast/nightfox.nvim](https://github.com/EdenEast/nightfox.nvim):
+
+- **dawnfox** — warm light theme
+- **terafox** — earthy dark theme
+
+By default the active palette follows your macOS appearance
+(`System Settings → Appearance`). To override:
+
+```bash
+# One-shot CLI flag (highest precedence)
+imessage-export --theme dawnfox
+imessage-export --theme terafox
+imessage-export --theme auto   # ignore persisted preference for this run
+
+# Env var (next-highest)
+IMESSAGE_EXPORT_THEME=terafox imessage-export
+```
+
+Or open the Textual app's Settings modal (press `s`) to pick a theme
+and persist it to `~/.config/imessage-export/recent.json`.
+
+Auto-detect only runs on macOS. On other platforms the TUI falls back
+to terafox unless one of the overrides above is set.
+
 ## Privacy & scope
 
 This tool reads your private message history. Before running it, know exactly
