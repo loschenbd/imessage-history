@@ -1088,6 +1088,12 @@ notable timeline changes. Quote sparingly and only when a specific phrase
 matters; prefer paraphrase. If a message is empty but marked
 [Attachment], treat it as a non-text exchange of the labeled speaker.
 Timestamps are in the exporter's local timezone as noted in the header.
+
+Day headers (── Saturday, June 6, 2026 ──) and gap markers
+(── 57 min later ──) are navigation aids inserted by the exporter — they
+are not authored content; ignore them when quoting. An indented line
+under a [time] Speaker: line is a continuation paragraph of that same
+speaker's preceding message.
 """
 
 

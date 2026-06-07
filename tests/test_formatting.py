@@ -424,5 +424,17 @@ class WriteJsonGapTests(unittest.TestCase):
         self.assertEqual(payload["messages"][1]["gap_seconds_before"], 5400)
 
 
+from imessage_export import ANALYSIS_PROMPT
+
+
+class AnalysisPromptTests(unittest.TestCase):
+    def test_documents_day_header_convention(self):
+        self.assertIn("Day headers", ANALYSIS_PROMPT)
+
+    def test_documents_indented_continuation(self):
+        self.assertIn("indented", ANALYSIS_PROMPT.lower())
+        self.assertIn("continuation", ANALYSIS_PROMPT.lower())
+
+
 if __name__ == "__main__":
     unittest.main()
