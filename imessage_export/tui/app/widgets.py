@@ -211,6 +211,10 @@ class HistoryView(VerticalScroll):
         if rows:
             rows[-1].focus()
 
+    def _page_step(self) -> int:
+        # Leave one line of overlap top + bottom for orientation (vim-style).
+        return max(1, self.size.height - 2)
+
     def action_jump_pageup(self) -> None:
         rows = list(self.query(".message-row"))
         if not rows:
@@ -220,8 +224,7 @@ class HistoryView(VerticalScroll):
         except ValueError:
             rows[0].focus()
             return
-        step = max(1, self.size.height - 2)
-        rows[max(0, idx - step)].focus()
+        rows[max(0, idx - self._page_step())].focus()
 
     def action_jump_pagedown(self) -> None:
         rows = list(self.query(".message-row"))
@@ -232,8 +235,7 @@ class HistoryView(VerticalScroll):
         except ValueError:
             rows[-1].focus()
             return
-        step = max(1, self.size.height - 2)
-        rows[min(len(rows) - 1, idx + step)].focus()
+        rows[min(len(rows) - 1, idx + self._page_step())].focus()
 
     def apply_marks(self, start_id: int | None, end_id: int | None, messages: list[dict]) -> None:
         """Repaint range highlight CSS classes based on current marks.
