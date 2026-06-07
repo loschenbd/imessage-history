@@ -304,6 +304,7 @@ def _run(args, conn) -> int:
     contacts = load_contacts(Path(args.contacts)) if args.contacts else {}
     window = resolve_window(args, unit)
 
+    print("Loading messages…", flush=True)
     messages, metadata = export(
         conn,
         chat_ids=chat_ids,
@@ -314,6 +315,7 @@ def _run(args, conn) -> int:
         include_attachments=args.include_attachments,
         unit=unit,
     )
+    print(f"  → {len(messages):,} messages", flush=True)
 
     # Build the redactor if asked. Both --redact and --redact-only enable it.
     redactor = None
@@ -336,6 +338,7 @@ def _run(args, conn) -> int:
             redact_urls=not args.no_redact_urls,
         )
         redactor     = Redactor(messages, metadata, contacts, rcfg)
+        print(f"Redacting ({len(redactor._alias_to_pseudonym)} aliases)…", flush=True)
         red_messages = redactor.redact_messages()
         red_metadata = redactor.redact_metadata()
 
@@ -371,23 +374,32 @@ def _run(args, conn) -> int:
     out_dir = Path(args.output_dir) / folder_name / date_str
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Write the originals UNLESS in --redact-only mode.
+    # Write the originals UNLESS in --redact-only mode. Each writer iterates
+    # the full message list, so we print a per-file tick on big exports the
+    # user knows it's still moving.
+    print(f"Writing to {out_dir}", flush=True)
+
+    def _emit(label: str, fn, *fnargs):
+        print(f"  {label}…", end="", flush=True)
+        fn(*fnargs)
+        print(" ✓", flush=True)
+
     if not args.redact_only:
-        write_csv      (out_dir / "conversation.csv",          messages)
-        write_json     (out_dir / "conversation.json",         messages, metadata)
-        write_txt      (out_dir / "conversation.txt",          messages)
-        write_markdown (out_dir / "conversation.md",           messages, metadata)
-        write_ai_ready (out_dir / "conversation_ai_ready.txt", messages, metadata)
+        _emit("conversation.csv",          write_csv,      out_dir / "conversation.csv",          messages)
+        _emit("conversation.json",         write_json,     out_dir / "conversation.json",         messages, metadata)
+        _emit("conversation.txt",          write_txt,      out_dir / "conversation.txt",          messages)
+        _emit("conversation.md",           write_markdown, out_dir / "conversation.md",           messages, metadata)
+        _emit("conversation_ai_ready.txt", write_ai_ready, out_dir / "conversation_ai_ready.txt", messages, metadata)
 
     # Write the redacted set if we built a redactor. We keep the "_redacted"
     # suffix even in --redact-only mode so the file names always signal that
     # the contents have been pseudonymized.
     if redactor is not None:
-        write_csv      (out_dir / "conversation_redacted.csv",          red_messages)
-        write_json     (out_dir / "conversation_redacted.json",         red_messages, red_metadata)
-        write_txt      (out_dir / "conversation_redacted.txt",          red_messages)
-        write_markdown (out_dir / "conversation_redacted.md",           red_messages, red_metadata)
-        write_ai_ready (out_dir / "conversation_redacted_ai_ready.txt", red_messages, red_metadata)
+        _emit("conversation_redacted.csv",          write_csv,      out_dir / "conversation_redacted.csv",          red_messages)
+        _emit("conversation_redacted.json",         write_json,     out_dir / "conversation_redacted.json",         red_messages, red_metadata)
+        _emit("conversation_redacted.txt",          write_txt,      out_dir / "conversation_redacted.txt",          red_messages)
+        _emit("conversation_redacted.md",           write_markdown, out_dir / "conversation_redacted.md",           red_messages, red_metadata)
+        _emit("conversation_redacted_ai_ready.txt", write_ai_ready, out_dir / "conversation_redacted_ai_ready.txt", red_messages, red_metadata)
         with open(out_dir / "pseudonym_map.json", "w") as f:
             json.dump(redactor.pseudonym_map(), f, indent=2, ensure_ascii=False)
 
