@@ -348,6 +348,15 @@ class Redactor:
                 v = p.get(key)
                 if v and v in self._alias_to_pseudonym:
                     p[key] = self._alias_to_pseudonym[v]
+        # Chat headers carry the raw chat_identifier (a phone/email for 1:1s)
+        # and an optional display_name (a free-text group name). Run both
+        # through _redact_text so participant handles + PII regexes scrub
+        # them — otherwise the redacted JSON metadata leaks the real handle.
+        for c in out.get("chats", []):
+            for key in ("chat_identifier", "display_name"):
+                v = c.get(key)
+                if v:
+                    c[key] = self._redact_text(v)
         # me_name in metadata stays as the original label so the AI-ready header
         # accurately describes who "Person A" is in the redacted view.
         if out.get("me_name") in self._alias_to_pseudonym:

@@ -154,12 +154,22 @@ class EndToEndExportTests(unittest.TestCase):
 class RedactionEndToEndTests(EndToEndExportTests):
     """Run the existing fixture export with --redact / --redact-only."""
 
+    def setUp(self):
+        super().setUp()
+        # The adversarial sweep tests need a real contact name registered so
+        # we can prove name-based redaction actually scrubs it. The base
+        # fixture's handle is +15551234567; map it to "Alice".
+        contacts = self.tmp_path / "contacts.csv"
+        contacts.write_text("handle,name\n+15551234567,Alice\n")
+        self._contacts_path = contacts
+
     def _redacted_run(self, extra=()):
         argv = [
             "--db", str(self.db_path),
             "--chat-id", "1",
             "--me-name", "Tester",
             "--output-dir", str(self.out_dir),
+            "--contacts", str(self._contacts_path),
             *extra,
         ]
         rc = ie.main(argv)
@@ -227,6 +237,35 @@ class RedactionEndToEndTests(EndToEndExportTests):
         # Must not contain a literal slash and must not start with ".."
         self.assertNotIn("/", name)
         self.assertFalse(name.startswith(".."))
+
+    def test_no_real_handle_appears_in_any_redacted_file(self):
+        self._redacted_run(extra=["--redact"])
+        out = self._resolve_first_export_dir()
+        for name in ("conversation_redacted.txt", "conversation_redacted.csv",
+                     "conversation_redacted.json", "conversation_redacted.md",
+                     "conversation_redacted_ai_ready.txt"):
+            text = (out / name).read_text()
+            self.assertNotIn("+15551234567", text, f"{name} leaked the real handle")
+
+    def test_no_real_contact_name_appears_in_any_redacted_file(self):
+        self._redacted_run(extra=["--redact"])
+        out = self._resolve_first_export_dir()
+        for name in ("conversation_redacted.txt", "conversation_redacted.csv",
+                     "conversation_redacted.json", "conversation_redacted.md",
+                     "conversation_redacted_ai_ready.txt"):
+            text = (out / name).read_text()
+            self.assertNotIn("Alice", text, f"{name} leaked the real name")
+
+    def test_redacted_body_pii_scrubbed(self):
+        self._redacted_run(extra=["--redact"])
+        out = self._resolve_first_export_dir()
+        red_text = (out / "conversation_redacted.txt").read_text()
+        self.assertNotIn("+15557654321",        red_text)
+        self.assertNotIn("alice@example.com",   red_text)
+        self.assertNotIn("https://example.com", red_text)
+        self.assertIn("[PHONE]", red_text)
+        self.assertIn("[EMAIL]", red_text)
+        self.assertIn("[URL]",   red_text)
 
 
 if __name__ == "__main__":
