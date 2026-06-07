@@ -126,10 +126,27 @@ def get_console() -> Console:
     return _console
 
 
+_stderr_console: Optional[Console] = None
+
+
+def get_stderr_console() -> Console:
+    """Return the shared stderr-bound Rich Console, initialized on first call.
+
+    Used by error-panel renderers in `errors.py` so error UX lands on fd 2
+    and stays out of pipe-grep'd stdout.
+    """
+    global _stderr_console
+    if _stderr_console is None:
+        _stderr_console = make_console(resolve_palette())
+        _stderr_console.file = __import__("sys").stderr
+    return _stderr_console
+
+
 def _reset_console_for_tests() -> None:
-    """Test-only hook to clear the singleton between tests."""
-    global _console
+    """Test-only hook to clear the singletons between tests."""
+    global _console, _stderr_console
     _console = None
+    _stderr_console = None
 
 
 def register_textual_themes(app) -> None:
