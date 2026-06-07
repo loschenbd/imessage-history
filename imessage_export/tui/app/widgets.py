@@ -148,15 +148,13 @@ class HistoryView(VerticalScroll):
     def render_messages(self, messages: list) -> None:
         """Render `messages` (list[Message]) into the pane.
 
-        Full reset: removes any stale search Input from a prior chat, updates
-        the message cache, and renders rows (or shows the empty-chat placeholder).
+        Updates the cache, then routes to `_render_rows` which sweeps stale
+        rows/headers/search-bar via a scoped (synchronous-enough) selector.
+        Avoid `self.remove_children()` (full, async) here — it lets a stale
+        placeholder linger past the next `show_placeholder` mount and trips
+        DuplicateIds when the next chat is empty too.
         """
         self._all_messages = list(messages)
-        self.remove_children()
-        self._placeholder_visible = False
-        if not messages:
-            self.show_placeholder("No messages in this chat.")
-            return
         self._render_rows(messages)
 
     def _format_row(self, m) -> Text:
@@ -273,13 +271,12 @@ class HistoryView(VerticalScroll):
         when you want a full reset that also drops the search bar and refreshes
         the cache.
         """
-        self.remove_children(".message-row, .day-header, #history-placeholder")
-        self._placeholder_visible = False
         if not messages:
             placeholder = "No matches." if self.app.state.history_search_query else "No messages in this chat."
-            self.mount(Static(placeholder, id="history-placeholder"))
-            self._placeholder_visible = True
+            self.show_placeholder(placeholder)
             return
+        self.remove_children(".message-row, .day-header, #history-placeholder")
+        self._placeholder_visible = False
         last_date = None
         for m in messages:
             ts = m.timestamp  # "YYYY-MM-DD HH:MM:SS"

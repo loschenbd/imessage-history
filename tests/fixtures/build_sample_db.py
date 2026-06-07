@@ -50,9 +50,12 @@ def build(path: Path) -> None:
     Layout:
       Primary 1:1 chat between Me and +15551234567 (Alice), 7 messages on 2025-05-01.
       Secondary 1:1 chat between Me and +15557654321 (Bob), 1 message on 2025-04-01.
-      The secondary chat is OLDER so `list_recent_chats` orders it AFTER the
-      primary — tests that index `_all_chats[0]` see Alice. Tests that need
-      a chat switch can use `_all_chats[1]` (Bob).
+      Tertiary 1:1 chat between Me and +15550001111 (Charlie), EMPTY (no msgs).
+
+      Order from list_recent_chats: Alice (newest msg) → Bob (older msg) →
+      Charlie (NULL last_date sorts last). Tests that index `_all_chats[0]`
+      keep seeing Alice. Tests that need a chat switch use `_all_chats[1]`
+      (Bob). Tests that need an EMPTY-chat switch use `_all_chats[2]` (Charlie).
     """
     if path.exists():
         path.unlink()
@@ -212,6 +215,20 @@ def build(path: Path) -> None:
         (101, "GUID-00000101", to_apple_ns(bob_when), "Bob says hi.", 0, 2),
     )
     conn.execute("INSERT INTO chat_message_join VALUES (?, ?)", (2, 101))
+
+    # ---- Tertiary chat: Me ↔ Charlie, empty (no messages). ----
+    # list_recent_chats LEFT-JOINs through chat_message_join, so an empty chat
+    # still appears with last_date=NULL and sorts last under ORDER BY DESC.
+    # Tests that switch to this chat exercise the empty-message render path.
+    conn.execute(
+        "INSERT INTO handle VALUES (?, ?, ?)",
+        (3, "+15550001111", "iMessage"),
+    )
+    conn.execute(
+        "INSERT INTO chat VALUES (?, ?, ?, ?, ?)",
+        (3, "iMessage;-;+15550001111", "+15550001111", None, 45),
+    )
+    conn.execute("INSERT INTO chat_handle_join VALUES (?, ?)", (3, 3))
 
     conn.commit()
     conn.close()

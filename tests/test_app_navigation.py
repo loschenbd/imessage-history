@@ -215,5 +215,45 @@ class TestSearchClearsOnChatSwitch(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(app.state.history_search_query)
 
 
+class TestSwitchToEmptyChat(unittest.IsolatedAsyncioTestCase):
+    """Regression: switching from a populated chat to an empty chat must
+    show the 'No messages in this chat.' placeholder, not leave a blank pane.
+
+    Bug history: render_messages used to call self.remove_children() (async)
+    then immediately show_placeholder(), which collided with the still-present
+    'Loading…' placeholder mounted moments earlier by on_sidebar_chat_selected.
+    """
+
+    async def test_empty_chat_shows_placeholder(self):
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        with _patched_app(tmpdir.name):
+            from imessage_export.tui.app.app import ImessageExportApp
+            from imessage_export.tui.app.widgets import HistoryView, Sidebar
+
+            app = ImessageExportApp()
+            async with app.run_test() as pilot:
+                await _boot_and_select_first_chat(pilot, app)
+                history = app.query_one(HistoryView)
+                self.assertGreater(len(history.query(".message-row")), 0)
+
+                sidebar = app.query_one(Sidebar)
+                if len(sidebar._all_chats) < 3:
+                    self.skipTest("fixture needs an empty chat at index 2")
+                empty_chat_id = sidebar._all_chats[2]["chat_id"]
+                sidebar.post_message(Sidebar.ChatSelected(empty_chat_id))
+                await pilot.pause()
+                for _ in range(40):
+                    if app.state.selected_chat_id == empty_chat_id and not app.state.history_loading:
+                        break
+                    await pilot.pause(delay=0.05)
+
+                # After loading an empty chat: no rows, placeholder visible.
+                self.assertEqual(len(history.query(".message-row")), 0)
+                placeholders = list(history.query("#history-placeholder"))
+                self.assertEqual(len(placeholders), 1)
+                self.assertIn("No messages in this chat", str(placeholders[0].renderable))
+
+
 if __name__ == "__main__":
     unittest.main()
