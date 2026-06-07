@@ -28,6 +28,9 @@ classifiers = [
 # Stdlib only — no runtime dependencies.
 dependencies = []
 
+[project.optional-dependencies]
+tui = ["rich>=13", "questionary>=2"]
+
 [project.urls]
 Repository = "https://github.com/loschenbd/imessage-history"
 Issues    = "https://github.com/loschenbd/imessage-history/issues"
