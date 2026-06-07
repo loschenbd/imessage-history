@@ -379,9 +379,9 @@ class ImessageExportApp(App):
     def on_key(self, event) -> None:
         # When an Input has focus, never let single-letter accelerators fire.
         if self.focused and getattr(self.focused, "__class__", type(None)).__name__ == "Input":
-            if event.character and event.character.isalpha() and not event.is_printable_control:
+            if event.character and event.character.isalpha():
                 # Let the input keep the keystroke; don't run BINDINGS.
-                return
+                event.prevent_default()
 
     def _refresh_status(self) -> None:
         try:
