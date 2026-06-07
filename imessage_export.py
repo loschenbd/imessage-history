@@ -204,6 +204,8 @@ class Redactor:
     """
 
     def __init__(self, messages, metadata, contacts, config):
+        if not config.me_name:
+            raise ValueError("RedactionConfig.me_name must be non-empty")
         self._messages  = messages
         self._metadata  = metadata
         self._contacts  = contacts or {}
@@ -253,11 +255,7 @@ class Redactor:
         # 3. Register all contact names (even ones not in this conversation —
         #    they may be mentioned in body text from third-party speakers).
         for handle, name in self._contacts.items():
-            if name and name not in self._alias_to_pseudonym:
-                # Brand-new person from contacts.csv — new pseudonym.
-                self._ensure_person(name, handle)
-            elif name:
-                # Name already mapped (it's a participant) — link the handle.
+            if name:
                 self._ensure_person(name, handle)
 
         # 4. Register --redact-names-file extras.
@@ -266,9 +264,13 @@ class Redactor:
                 self._ensure_person(extra)
 
     def pseudonym_map(self) -> dict:
+        def _sort_key(item):
+            pseudonym = item[0]
+            letters = pseudonym.removeprefix("Person ")
+            return (len(letters), letters)
         people = [
             {"pseudonym": p, "aliases": list(aliases)}
-            for p, aliases in sorted(self._pseudonym_to_aliases.items())
+            for p, aliases in sorted(self._pseudonym_to_aliases.items(), key=_sort_key)
         ]
         return {
             "aliases_to_pseudonym": dict(self._alias_to_pseudonym),

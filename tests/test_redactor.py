@@ -142,6 +142,31 @@ class PseudonymMapTests(unittest.TestCase):
         person_a = next(p for p in pmap["people"] if p["pseudonym"] == "Person A")
         self.assertIn("Ben", person_a["aliases"])
 
+    def test_empty_me_name_raises(self):
+        with self.assertRaises(ValueError):
+            ie.Redactor(messages=[], metadata=_metadata([]), contacts={},
+                        config=ie.RedactionConfig(me_name=""))
+
+    def test_people_sorted_naturally_past_z(self):
+        # Build a redactor with 28 distinct names so we get Person A through Person AB
+        messages = []
+        contacts = {}
+        for i in range(27):  # Ben (A) + 27 incoming = 28 total
+            handle = f"+1555{i:07d}"
+            name = f"Speaker{i:02d}"
+            messages.append(_msg(i + 1, is_from_me=0, author_label=name, sender_handle=handle))
+            contacts[handle] = name
+        md = _metadata([(h, n) for h, n in contacts.items()])
+        r = ie.Redactor(messages, md, contacts=contacts,
+                        config=ie.RedactionConfig(me_name="Ben"))
+        people = r.pseudonym_map()["people"]
+        # Should be ordered A, B, C, ..., Z, AA, AB (natural — not lexicographic)
+        pseudonyms = [p["pseudonym"] for p in people]
+        self.assertEqual(pseudonyms[0], "Person A")
+        self.assertEqual(pseudonyms[25], "Person Z")
+        self.assertEqual(pseudonyms[26], "Person AA")
+        self.assertEqual(pseudonyms[27], "Person AB")
+
 
 if __name__ == "__main__":
     unittest.main()
