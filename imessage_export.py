@@ -165,6 +165,32 @@ TAPBACK_GLYPHS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Redaction
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class RedactionConfig:
+    me_name: str
+    extra_names: list[str] = field(default_factory=list)
+    redact_phones: bool = True
+    redact_emails: bool = True
+    redact_urls: bool = True
+    case_sensitive: bool = False
+
+
+def _excel_letters(n: int) -> str:
+    """Spreadsheet-column-style letters: 0→A, 25→Z, 26→AA, 27→AB, …, 701→ZZ."""
+    if n < 0:
+        raise ValueError("_excel_letters requires n >= 0")
+    s = ""
+    n += 1  # shift to 1-indexed so the math works cleanly
+    while n > 0:
+        n, rem = divmod(n - 1, 26)
+        s = chr(ord("A") + rem) + s
+    return s
+
+
 def classify_tapback(amt: int) -> Optional[tuple[str, bool]]:
     """Return (name, removed) or None for non-tapbacks."""
     if 2000 <= amt <= 2006:
