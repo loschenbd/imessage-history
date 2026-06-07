@@ -355,5 +355,28 @@ class TestActiveRegionBorder(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(history.has_class("region-active"))
 
 
+class TestStatusLineFocusChip(unittest.IsolatedAsyncioTestCase):
+    async def test_chip_reflects_focused_region(self):
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        with _patched_app(tmpdir.name):
+            from imessage_export.tui.app.app import ImessageExportApp
+            from imessage_export.tui.app.widgets import HistoryView, Sidebar, StatusLine
+
+            app = ImessageExportApp()
+            async with app.run_test() as pilot:
+                await _boot_and_select_first_chat(pilot, app)
+                status = app.query_one(StatusLine)
+                # After chat load, focus is on history (Task 7).
+                rendered = str(status.renderable)
+                self.assertIn("[history]", rendered)
+
+                sidebar = app.query_one(Sidebar)
+                sidebar.query_one("#sidebar-list").focus()
+                await pilot.pause()
+                rendered = str(status.renderable)
+                self.assertIn("[sidebar]", rendered)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -388,14 +388,26 @@ class StatusLine(Static):
     }
     """
 
+    def __init__(self, *, id: str | None = None) -> None:
+        super().__init__(id=id)
+        self._focus_region: str = "sidebar"
+
+    def set_focus_region(self, region: str) -> None:
+        """Set the focus chip tag and refresh the rendered line."""
+        self._focus_region = region
+        try:
+            self.update_from_state(self.app.state)  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
     def update_from_state(self, state) -> None:
+        chip = f"[{self._focus_region}]"
         if state.last_export_status:
-            self.update(state.last_export_status)
+            self.update(f"{chip}  {state.last_export_status}")
             return
         from .state import resolved_window, _format_window
         w = resolved_window(state)
         window_str = _format_window(w)
-
         source = {
             "selection": "from selection",
             "typed":     "from Window modal",
@@ -404,7 +416,7 @@ class StatusLine(Static):
         contacts_str = f"contacts: {state.contacts_path.name}" if state.contacts_path else "contacts: none"
         redact_str = "redact: on" if state.redact else "redact: off"
         self.update(
-            f"window: {window_str} ({source}) · output: {state.output_dir} · {contacts_str} · {redact_str}"
+            f"{chip}  window: {window_str} ({source}) · output: {state.output_dir} · {contacts_str} · {redact_str}"
         )
 
 
