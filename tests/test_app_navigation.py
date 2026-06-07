@@ -6,6 +6,7 @@ flow. Same patching pattern as test_app_smoke.py.
 """
 from __future__ import annotations
 
+import contextlib
 import sys
 import tempfile
 import unittest
@@ -16,19 +17,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures"))
 from build_sample_db import build  # noqa: E402
 
 
-def _patched_app_context(tmpdir_name: str):
+@contextlib.contextmanager
+def _patched_app(tmpdir_name: str):
+    """Build a fixture chat.db at tmpdir_name and stack the three patches the
+    Textual app needs to run hermetically: DEFAULT_DB, defaults path, and a
+    no-op _offer_contacts_scan. Yields nothing — callers just `with _patched_app(...):`.
+    """
     db_path = Path(tmpdir_name) / "chat.db"
     build(db_path)
     defaults_path = Path(tmpdir_name) / "recent.json"
-    return mock.patch.multiple(
-        "imessage_export.tui.app.app",
-        DEFAULT_DB=db_path,
-    ), mock.patch(
-        "imessage_export.tui.defaults.DEFAULT_PATH", defaults_path,
-    ), mock.patch(
-        "imessage_export.tui.app.app.ImessageExportApp._offer_contacts_scan",
-        return_value=None,
-    )
+    with mock.patch.multiple("imessage_export.tui.app.app", DEFAULT_DB=db_path), \
+         mock.patch("imessage_export.tui.defaults.DEFAULT_PATH", defaults_path), \
+         mock.patch(
+             "imessage_export.tui.app.app.ImessageExportApp._offer_contacts_scan",
+             return_value=None,
+         ):
+        yield
 
 
 async def _boot_and_select_first_chat(pilot, app):
@@ -47,8 +51,7 @@ class TestHistoryRowFocus(unittest.IsolatedAsyncioTestCase):
     async def test_message_rows_are_focusable(self):
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)
-        ctx_db, ctx_def, ctx_scan = _patched_app_context(tmpdir.name)
-        with ctx_db, ctx_def, ctx_scan:
+        with _patched_app(tmpdir.name):
             from imessage_export.tui.app.app import ImessageExportApp
             from imessage_export.tui.app.widgets import HistoryView
 
@@ -65,8 +68,7 @@ class TestHistoryRowFocus(unittest.IsolatedAsyncioTestCase):
     async def test_enter_on_focused_row_marks_range(self):
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)
-        ctx_db, ctx_def, ctx_scan = _patched_app_context(tmpdir.name)
-        with ctx_db, ctx_def, ctx_scan:
+        with _patched_app(tmpdir.name):
             from imessage_export.tui.app.app import ImessageExportApp
             from imessage_export.tui.app.widgets import HistoryView
 
