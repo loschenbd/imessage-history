@@ -160,6 +160,8 @@ class HistoryView(VerticalScroll):
     def show_loading(self) -> None:
         self.show_placeholder("Loading…")
 
+    PREVIEW_CAP = 2000
+
     def render_messages(self, messages: list) -> None:
         """Render `messages` as ONE Rich Text blob inside a single Static.
 
@@ -169,6 +171,12 @@ class HistoryView(VerticalScroll):
         rendering is cell-based, so a single big Static inside a
         VerticalScroll is effectively virtualized: only the lines visible
         in the viewport actually paint, no matter how long the blob is.
+
+        Cap: we render at most PREVIEW_CAP most-recent messages. Beyond
+        that, Textual's per-cell Strip cache blows past gigabytes of
+        memory and scrolling jitters even though paint is still O(visible
+        cells). Export writes the full chat regardless — the preview is
+        for orientation, not for reading.
 
         Trade-off: click-on-a-row-to-mark-range stops working because
         there are no per-row widgets to attach data_msg_id to. The Window
@@ -180,9 +188,24 @@ class HistoryView(VerticalScroll):
             self.show_placeholder("No messages in this chat.")
             return
 
+        total = len(messages)
+        if total > self.PREVIEW_CAP:
+            visible = messages[-self.PREVIEW_CAP:]
+            hidden = total - self.PREVIEW_CAP
+        else:
+            visible = messages
+            hidden = 0
+
         blob = Text()
+        if hidden:
+            blob.append(
+                f"── Showing last {self.PREVIEW_CAP:,} of {total:,} messages "
+                f"({hidden:,} older hidden) · Export writes the full chat ──\n\n",
+                style="dim italic",
+            )
+
         last_date = None
-        for m in messages:
+        for m in visible:
             ts = m.timestamp  # "YYYY-MM-DD HH:MM:SS"
             day = ts[:10]
             if day != last_date:
