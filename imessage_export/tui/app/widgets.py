@@ -648,6 +648,23 @@ class HistoryView(VerticalScroll):
         text.append("  ⬆", style="bold")
         return text
 
+    # Selection-band visual: every line gets a 2-char gutter so the column
+    # alignment is constant. The gutter content changes by membership:
+    #   ◆  → endpoint (the two anchors of the selection)
+    #   │  → in-range (lines between the anchors)
+    #      → unselected
+    # This is the pattern text editors use to show a multi-line selection —
+    # it stays readable across themes (no row backgrounds fighting the
+    # foreground text) and gives the eye a continuous vertical bar through
+    # the selected band capped by the ◆ markers.
+    GUTTER_ENDPOINT = "◆ "
+    GUTTER_IN_RANGE = "│ "
+    GUTTER_NONE = "  "
+    # 2-char gutter shifts wrapped body lines two columns right; pad the
+    # wrap indent to match so wrapped text aligns under the message body
+    # instead of slipping back under the gutter.
+    _WRAP_INDENT = " " * 12  # 2 gutter + 10 indent (matches "[12:34 pm] ")
+
     def _build_blob(self, visible: list) -> Text:
         """Render a chunk of messages as a single Rich Text blob.
 
@@ -657,17 +674,18 @@ class HistoryView(VerticalScroll):
         click-to-mark-a-range survives the single-Static blob model
         (we don't have per-row widgets to attach `data_msg_id` to).
 
-        Endpoint and in-range styling is layered on top: endpoints
-        (`_mark_start_id` / `_mark_end_id`) get `reverse` so the line
-        clearly flips to foreground-on-background; in-range lines get
-        a subtle accent-tinted background so the selection extent is
-        visible at a glance.
+        Selection highlight uses a gutter bar (see GUTTER_* class attrs).
+        Endpoints render the gutter as ◆ in bold accent, the body in
+        accent foreground; in-range lines render │ in accent so the
+        selection band reads as a continuous vertical edge. Unselected
+        lines get two padding spaces so all rows stay column-aligned.
         """
         blob = Text()
         last_date = None
         endpoints = {self._mark_start_id, self._mark_end_id} - {None}
         in_range = self._in_range_ids
         accent_hex = self._accent_hex()
+        accent_style = accent_hex or "default"
         for m in visible:
             ts = m.timestamp  # "YYYY-MM-DD HH:MM:SS"
             day = ts[:10]
@@ -675,38 +693,55 @@ class HistoryView(VerticalScroll):
                 dt = datetime.strptime(day, "%Y-%m-%d")
                 if last_date is not None:
                     blob.append("\n")
+                # Day-header sits flush-left without a gutter — the bar
+                # would imply the header is itself selectable, which it
+                # isn't (clicks on it carry no msg_id meta).
                 blob.append(
                     f"── {dt.strftime('%A, %B %-d, %Y')} ──\n",
                     style="bold cyan",
                 )
                 last_date = day
+
+            is_endpoint = m.message_id in endpoints
+            is_in_range = (not is_endpoint) and m.message_id in in_range
+            if is_endpoint:
+                gutter_str = self.GUTTER_ENDPOINT
+                gutter_style = f"bold {accent_style}"
+                ts_style = accent_style
+                speaker_style = f"bold {accent_style}"
+                body_style = accent_style
+            elif is_in_range:
+                gutter_str = self.GUTTER_IN_RANGE
+                gutter_style = accent_style
+                ts_style = "dim"
+                speaker_style = "bold"
+                body_style = ""
+            else:
+                gutter_str = self.GUTTER_NONE
+                gutter_style = ""
+                ts_style = "dim"
+                speaker_style = "bold"
+                body_style = ""
+
             ts_str = _format_time_12h(ts)
             speaker = m.author_label or ""
-            body = (m.text or "").replace("\n", "\n          ")
+            body = (m.text or "").replace("\n", "\n" + self._WRAP_INDENT)
+
             # Meta-tag every span on this line with the message id. A click
-            # anywhere along the line will report this id back via
-            # `event.style.meta["msg_id"]` so on_click can mark it as a
-            # range endpoint without needing per-row widgets.
+            # anywhere along the line — gutter, timestamp, body — reports
+            # this id back via `event.style.meta["msg_id"]` so on_click
+            # can mark it as a range endpoint without per-row widgets.
             line_meta = Style(meta={"msg_id": m.message_id})
+
+            def _meta_style(extra: str) -> Style:
+                return line_meta + Style.parse(extra) if extra else line_meta
+
             line = Text()
-            line.append(f"[{ts_str}] ", style=line_meta + Style.parse("dim"))
-            line.append(f"{speaker}: ", style=line_meta + Style.parse("bold"))
-            line.append(body, style=line_meta)
+            line.append(gutter_str, style=_meta_style(gutter_style))
+            line.append(f"[{ts_str}] ", style=_meta_style(ts_style))
+            line.append(f"{speaker}: ", style=_meta_style(speaker_style))
+            line.append(body, style=_meta_style(body_style))
             line.append("\n")
-            if m.message_id in endpoints:
-                # Strongest visual: bold + reverse-video — the user knows
-                # exactly which messages anchor the export window.
-                line.stylize("bold reverse")
-            elif m.message_id in in_range and accent_hex:
-                # Subtle: accent-tinted background so the selection's
-                # extent reads as a coherent band without overwhelming
-                # the message text. Plain `accent_hex` is too saturated
-                # for body text — we fall back to a dim style if the
-                # palette didn't expose an accent.
-                line.stylize(f"on {accent_hex}")
-                line.stylize("dim")
-            elif m.message_id in in_range:
-                line.stylize("dim italic")
             blob.append(line)
         return blob
 

@@ -225,9 +225,16 @@ class TestHistoryViewRangeMarks(unittest.IsolatedAsyncioTestCase):
     async def test_apply_marks_repaints_topmost_chunk(self):
         """The mark visual must propagate into the actual rendered
         Static — apply_marks should call `.update()` on every chunk
-        widget so the blob picks up the new endpoint styles. Without
+        widget so the blob picks up the new gutter markers. Without
         this the user sees marks tracked in state but no visual
-        confirmation in the chat."""
+        confirmation in the chat.
+
+        The visual scheme is a 2-char gutter at the start of each
+        message line: `◆ ` for endpoints, `│ ` for in-range, `  `
+        for unselected. Asserting on the plain text is stronger
+        than asserting on style strings — it survives theme changes
+        and Rich/Textual style-rendering tweaks.
+        """
         from imessage_export.tui.app.widgets import HistoryView
 
         app, HistoryView = self._build_stub_app()
@@ -236,23 +243,28 @@ class TestHistoryViewRangeMarks(unittest.IsolatedAsyncioTestCase):
             history.render_messages(_fake_messages(5))
             await pilot.pause()
 
-            # Before marks: no spans styled with `reverse`.
-            blob_before = history._topmost_widget.renderable
-            self.assertFalse(
-                any("reverse" in str(s.style) for s in blob_before.spans),
-                "no endpoint style expected before apply_marks",
-            )
+            # Before marks: gutter is all blank — neither marker present.
+            text_before = history._topmost_widget.renderable.plain
+            self.assertNotIn("◆", text_before,
+                             "endpoint marker must not render before apply_marks")
+            self.assertNotIn("│", text_before,
+                             "in-range marker must not render before apply_marks")
 
             messages = [{"message_id": m.message_id, "timestamp": m.timestamp}
                         for m in history._all_messages]
             history.apply_marks(1, 3, messages)
             await pilot.pause()
 
-            # After marks: spans must include `reverse` (endpoint paint).
-            blob_after = history._topmost_widget.renderable
-            self.assertTrue(
-                any("reverse" in str(s.style) for s in blob_after.spans),
-                "endpoint style MUST be present after apply_marks(1, 3)",
+            # After marks(1, 3): two endpoints (1 and 3) and one in-range
+            # (2). The blob's plain text must show both markers.
+            text_after = history._topmost_widget.renderable.plain
+            self.assertEqual(
+                text_after.count("◆"), 2,
+                "exactly two endpoint markers expected after apply_marks(1, 3)",
+            )
+            self.assertEqual(
+                text_after.count("│"), 1,
+                "exactly one in-range marker expected for the single line between 1 and 3",
             )
 
     async def test_click_on_load_more_affordance_does_not_post_range_mark(self):
