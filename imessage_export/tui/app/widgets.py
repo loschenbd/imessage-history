@@ -924,6 +924,8 @@ class HistoryView(VerticalScroll):
     BINDINGS = [
         ("up", "cursor_up", "Previous message"),
         ("down", "cursor_down", "Next message"),
+        ("shift+up", "extend_up", "Extend selection up"),
+        ("shift+down", "extend_down", "Extend selection down"),
         ("enter", "mark_row", "Mark range endpoint"),
         ("space", "mark_row", "Mark range endpoint"),
         ("escape", "clear_marks", "Clear marks"),
@@ -992,6 +994,63 @@ class HistoryView(VerticalScroll):
     def action_cursor_down(self) -> None:
         self._move_cursor(+1)
 
+    def action_extend_up(self) -> None:
+        self._extend_selection(-1)
+
+    def action_extend_down(self) -> None:
+        self._extend_selection(+1)
+
+    def _extend_selection(self, delta: int) -> None:
+        """Move the cursor by `delta` and grow the selection from a
+        fixed anchor. The anchor is set on the first shift+arrow press
+        (to the cursor's current position) and stays put while shift
+        is held; the active follows the cursor.
+        """
+        if not self._all_messages or self._cursor_msg_id is None:
+            return
+        i = self._id_to_index.get(self._cursor_msg_id)
+        if i is None:
+            self._cursor_msg_id = self._all_messages[-1].message_id
+            self._repaint_for_ids({self._cursor_msg_id})
+            self._scroll_cursor_into_view()
+            return
+        new_i = max(0, min(len(self._all_messages) - 1, i + delta))
+        if new_i == i and self._mark_anchor_id == self._cursor_msg_id:
+            return  # at a bound + no new extension to apply
+        old_id = self._cursor_msg_id
+        new_id = self._all_messages[new_i].message_id
+
+        # Capture OLD highlighted ids before we mutate, so the painter
+        # has a precise set to clear.
+        old_highlighted = set(self._in_range_ids)
+        if self._mark_anchor_id is not None:
+            old_highlighted.add(self._mark_anchor_id)
+        if self._mark_active_id is not None:
+            old_highlighted.add(self._mark_active_id)
+
+        if self._mark_anchor_id is None:
+            self._mark_anchor_id = old_id   # anchor where shift+arrow began
+
+        self._cursor_msg_id = new_id
+        self._mark_active_id = new_id
+
+        # Recompute in_range from (anchor, active) via id_to_index.
+        a = self._id_to_index[self._mark_anchor_id]
+        b = self._id_to_index[new_id]
+        lo, hi = (a, b) if a <= b else (b, a)
+        self._in_range_ids = {self._all_messages[k].message_id
+                              for k in range(lo, hi + 1)}
+        # Mirror anchor/active into the legacy mark_start_id/mark_end_id
+        # so apply_marks logic + the export-window flow stays consistent.
+        self._mark_start_id = self._mark_anchor_id
+        self._mark_end_id = new_id
+
+        new_highlighted = set(self._in_range_ids)
+        new_highlighted.add(self._mark_anchor_id)
+        new_highlighted.add(new_id)
+        self._repaint_for_ids({old_id, new_id} | old_highlighted | new_highlighted)
+        self._scroll_cursor_into_view()
+
     def _move_cursor(self, delta: int) -> None:
         if not self._all_messages or self._cursor_msg_id is None:
             return
@@ -1007,11 +1066,21 @@ class HistoryView(VerticalScroll):
             return
         old_id = self._cursor_msg_id
         new_id = self._all_messages[new_i].message_id
+        # Capture the OLD shift+arrow range (if any) so the painter has
+        # a precise set to clear when a plain Up/Down collapses it.
+        old_highlighted: set[int] = set(self._in_range_ids)
+        if self._mark_anchor_id is not None:
+            old_highlighted.add(self._mark_anchor_id)
+        if self._mark_active_id is not None:
+            old_highlighted.add(self._mark_active_id)
         self._cursor_msg_id = new_id
         # Clear any in-progress shift+arrow extension on a plain Up/Down.
         self._mark_anchor_id = None
         self._mark_active_id = None
-        self._repaint_for_ids({old_id, new_id})
+        self._mark_start_id = None
+        self._mark_end_id = None
+        self._in_range_ids = set()
+        self._repaint_for_ids({old_id, new_id} | old_highlighted)
         self._scroll_cursor_into_view()
 
     def _scroll_cursor_into_view(self) -> None:

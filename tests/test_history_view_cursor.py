@@ -248,6 +248,60 @@ class TestHistoryViewCursor(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertEqual(history._id_to_index, {i: i for i in range(10)})
 
+    async def test_shift_down_extends_selection_from_anchor(self):
+        """First shift+down sets the anchor on the current cursor and
+        moves the active down by one. The in_range set grows to cover
+        the anchor and active rows."""
+        app, HistoryView = self._build_stub_app()
+        async with app.run_test() as pilot:
+            history = app.query_one(HistoryView)
+            history.render_messages(_fake_messages(10))
+            await pilot.pause()
+            history._cursor_msg_id = 4
+
+            history.action_extend_down()
+            await pilot.pause()
+
+            self.assertEqual(history._cursor_msg_id, 5)
+            self.assertEqual(history._mark_anchor_id, 4)
+            self.assertEqual(history._mark_active_id, 5)
+            self.assertEqual(history._in_range_ids, {4, 5})
+
+    async def test_second_shift_keeps_anchor_grows_range(self):
+        app, HistoryView = self._build_stub_app()
+        async with app.run_test() as pilot:
+            history = app.query_one(HistoryView)
+            history.render_messages(_fake_messages(10))
+            await pilot.pause()
+            history._cursor_msg_id = 4
+
+            history.action_extend_down()
+            await pilot.pause()
+            history.action_extend_down()
+            await pilot.pause()
+            history.action_extend_down()
+            await pilot.pause()
+
+            self.assertEqual(history._mark_anchor_id, 4)
+            self.assertEqual(history._mark_active_id, 7)
+            self.assertEqual(history._in_range_ids, {4, 5, 6, 7})
+
+    async def test_plain_arrow_clears_anchor(self):
+        app, HistoryView = self._build_stub_app()
+        async with app.run_test() as pilot:
+            history = app.query_one(HistoryView)
+            history.render_messages(_fake_messages(10))
+            await pilot.pause()
+            history._cursor_msg_id = 4
+            history.action_extend_down()
+            await pilot.pause()
+            # Anchor is 4, active is 5; now plain Down should clear.
+            history.action_cursor_down()
+            await pilot.pause()
+            self.assertIsNone(history._mark_anchor_id)
+            self.assertIsNone(history._mark_active_id)
+            self.assertEqual(history._in_range_ids, set())
+
 
 if __name__ == "__main__":
     unittest.main()
