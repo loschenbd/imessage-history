@@ -302,6 +302,42 @@ class TestHistoryViewCursor(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(history._mark_active_id)
             self.assertEqual(history._in_range_ids, set())
 
+    async def test_action_cursor_to_end_parks_on_latest(self):
+        app, HistoryView = self._build_stub_app()
+        async with app.run_test() as pilot:
+            history = app.query_one(HistoryView)
+            history.render_messages(_fake_messages(20))
+            await pilot.pause()
+            history._cursor_msg_id = 5
+
+            history.action_cursor_to_end()
+            await pilot.pause()
+            self.assertEqual(history._cursor_msg_id, 19)
+
+    async def test_action_cursor_to_start_parks_on_oldest_loaded(self):
+        app, HistoryView = self._build_stub_app()
+        async with app.run_test() as pilot:
+            history = app.query_one(HistoryView)
+            history.render_messages(_fake_messages(20))
+            await pilot.pause()
+            history.action_cursor_to_start()
+            await pilot.pause()
+            self.assertEqual(history._cursor_msg_id, 0)
+
+    async def test_action_page_down_moves_by_viewport_height(self):
+        app, HistoryView = self._build_stub_app()
+        async with app.run_test() as pilot:
+            history = app.query_one(HistoryView)
+            history.render_messages(_fake_messages(200))
+            await pilot.pause()
+            history._cursor_msg_id = 10
+
+            history.action_page_down()
+            await pilot.pause()
+            # Default viewport in the stub is small; just verify cursor
+            # advanced by at least 5 messages (page is `max(5, size.height)`).
+            self.assertGreaterEqual(history._cursor_msg_id, 15)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -926,6 +926,10 @@ class HistoryView(VerticalScroll):
         ("down", "cursor_down", "Next message"),
         ("shift+up", "extend_up", "Extend selection up"),
         ("shift+down", "extend_down", "Extend selection down"),
+        ("home", "cursor_to_start", "Jump to oldest loaded"),
+        ("end", "cursor_to_end", "Jump to latest"),
+        ("pageup", "page_up", "Page up"),
+        ("pagedown", "page_down", "Page down"),
         ("enter", "mark_row", "Mark range endpoint"),
         ("space", "mark_row", "Mark range endpoint"),
         ("escape", "clear_marks", "Clear marks"),
@@ -999,6 +1003,68 @@ class HistoryView(VerticalScroll):
 
     def action_extend_down(self) -> None:
         self._extend_selection(+1)
+
+    def action_cursor_to_start(self) -> None:
+        """Jump to the oldest loaded message."""
+        if not self._all_messages:
+            return
+        target = self._all_messages[0].message_id
+        self._jump_cursor_to(target)
+
+    def action_cursor_to_end(self) -> None:
+        """Jump to the latest message."""
+        if not self._all_messages:
+            return
+        target = self._all_messages[-1].message_id
+        self._jump_cursor_to(target)
+
+    def action_page_up(self) -> None:
+        self._move_cursor(-max(5, self._viewport_height_lines()))
+
+    def action_page_down(self) -> None:
+        self._move_cursor(+max(5, self._viewport_height_lines()))
+
+    def _jump_cursor_to(self, target_id: int) -> None:
+        if self._cursor_msg_id == target_id:
+            return
+        old_id = self._cursor_msg_id
+        # Capture any old highlight state before clearing it, so the
+        # painter has a precise set to repaint as cleared. Mirrors the
+        # symmetric clear in `_move_cursor` so Home/End don't leave a
+        # stale highlighted range from a prior shift+arrow extension.
+        old_highlighted: set[int] = set(self._in_range_ids)
+        if self._mark_anchor_id is not None:
+            old_highlighted.add(self._mark_anchor_id)
+        if self._mark_active_id is not None:
+            old_highlighted.add(self._mark_active_id)
+        if self._mark_start_id is not None:
+            old_highlighted.add(self._mark_start_id)
+        if self._mark_end_id is not None:
+            old_highlighted.add(self._mark_end_id)
+
+        self._cursor_msg_id = target_id
+        self._mark_anchor_id = None
+        self._mark_active_id = None
+        self._mark_start_id = None
+        self._mark_end_id = None
+        self._in_range_ids = set()
+
+        affected = {target_id} | old_highlighted
+        if old_id is not None:
+            affected.add(old_id)
+        self._repaint_for_ids(affected)
+        self._scroll_cursor_into_view()
+
+    def _viewport_height_lines(self) -> int:
+        """Best-effort viewport height in terminal rows. Used by
+        page up/down to compute a sensible jump distance. Falls back
+        to 20 if the size isn't known yet (e.g. during early mount).
+        """
+        try:
+            h = int(self.size.height)
+        except Exception:
+            h = 0
+        return h if h > 0 else 20
 
     def _extend_selection(self, delta: int) -> None:
         """Move the cursor by `delta` and grow the selection from a
