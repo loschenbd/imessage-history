@@ -69,9 +69,15 @@ class Sidebar(Vertical):
     def _format_row(self, row: dict) -> str:
         # Reuse the wizard's formatter but drop the `[chat_id]` prefix —
         # the id is opaque to the user and just adds visual noise in the
-        # narrow sidebar column.
+        # narrow sidebar column. `terse_names=True` also drops the
+        # "(+1234567890)" suffix when the contact resolved to a name, so
+        # the column reads as "Mom · message · 412 msgs · last …" rather
+        # than "Mom (+13087089787) · …". _refresh_list searches against
+        # the raw handles separately, so filter-by-number still works.
         from ..wizard import _format_chat_row
-        return _format_chat_row(row, self._contacts, include_id=False)
+        return _format_chat_row(
+            row, self._contacts, include_id=False, terse_names=True,
+        )
 
     def _refresh_list(self, query: str) -> None:
         list_view = self.query_one("#sidebar-list", ListView)
@@ -79,8 +85,18 @@ class Sidebar(Vertical):
         q = query.strip().lower()
         for row in self._all_chats:
             label = self._format_row(row)
-            if q and q not in label.lower():
-                continue
+            if q:
+                # Search against the display label AND the raw participants
+                # / chat_identifier. The display dropped handles for matched
+                # contacts; without this widening, typing a phone number
+                # would hide its (named) chat — a silent regression.
+                haystack = " ".join((
+                    label,
+                    str(row.get("participants") or ""),
+                    str(row.get("chat_identifier") or ""),
+                )).lower()
+                if q not in haystack:
+                    continue
             item = ListItem(Label(label))
             item.data = row.get("chat_id") if isinstance(row, dict) else row["chat_id"]  # type: ignore[attr-defined]
             list_view.append(item)
@@ -227,7 +243,14 @@ class ChatHeader(Static):
             or chat_row.get("chat_identifier")
             or "(unknown)"
         )
-        who = _resolve_names(raw_who, contacts) if contacts else raw_who
+        # `terse_when_resolved=True` drops the "(+1234567890)" suffix when
+        # a contact name resolved — the header reads as "Mom" instead of
+        # "Mom (+13087089787)". When no contact matched, the bare handle
+        # still shows.
+        who = (
+            _resolve_names(raw_who, contacts, terse_when_resolved=True)
+            if contacts else raw_who
+        )
         kind = chat_row.get("style", "")
         msgs = chat_row.get("msg_count")
         last = chat_row.get("last_message_local")

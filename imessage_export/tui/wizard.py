@@ -231,13 +231,24 @@ def _step_pick_chat(conn, defaults: Defaults, contacts: dict) -> tuple[Optional[
     return chat_id, row
 
 
-def _format_chat_row(r: dict, contacts: dict, *, include_id: bool = True) -> str:
+def _format_chat_row(
+    r: dict,
+    contacts: dict,
+    *,
+    include_id: bool = True,
+    terse_names: bool = False,
+) -> str:
     """Format one chat row for the picker.
 
     `include_id=False` drops the leading `[chat_id]` token — the TUI sidebar
     uses this since the id is a debug crutch the user doesn't filter or read
     by. The wizard's questionary picker keeps it so curious users can still
     cross-reference against `--list` output.
+
+    `terse_names=True` drops the `(handle)` suffix from matched contacts so
+    a resolved row reads as plain "Mom" instead of "Mom (+13087089787)" —
+    the TUI sidebar uses this for a cleaner contact-list look. The wizard
+    leaves it False so its type-to-filter still matches against either.
     """
     raw_who = (
         r.get("display_name")
@@ -247,7 +258,10 @@ def _format_chat_row(r: dict, contacts: dict, *, include_id: bool = True) -> str
     )
     # Resolve handles via contacts. `raw_who` may be a single handle or a
     # comma-joined list of handles (group chat).
-    who = _resolve_names(raw_who, contacts) if contacts else raw_who
+    who = (
+        _resolve_names(raw_who, contacts, terse_when_resolved=terse_names)
+        if contacts else raw_who
+    )
     kind = r.get("style", "")
     msgs = r.get("msg_count", "?")
     last = r.get("last_message_local") or "—"
@@ -258,13 +272,20 @@ def _format_chat_row(r: dict, contacts: dict, *, include_id: bool = True) -> str
     return f"[{rid}] {body}"
 
 
-def _resolve_names(raw: str, contacts: dict) -> str:
-    """Render a handle (or comma-joined handle list) as "Name (handle)" pairs.
+def _resolve_names(raw: str, contacts: dict, *, terse_when_resolved: bool = False) -> str:
+    """Render a handle (or comma-joined handle list) as a display string.
 
-    Falls back to bare handle when no contact match. Both the name AND the
-    handle stay in the visible string so questionary's type-to-filter works
-    against either. Dedupes by name when multiple handles resolve to the
-    same person (e.g. email + phone for the same contact)."""
+    Default — "Name (handle)" when matched, bare handle when not. Keeping
+    both visible lets questionary's type-to-filter match against either,
+    which the wizard relies on.
+
+    `terse_when_resolved=True` drops the `(handle)` suffix when a contact
+    matched — output is just "Name". Bare handles are unchanged. The TUI
+    sidebar + ChatHeader use this for a cleaner look; the sidebar widens
+    its filter target separately so search-by-handle still works.
+
+    Dedupes by name when multiple handles resolve to the same person
+    (e.g. email + phone for the same contact)."""
     from ..contacts import normalize_handle
 
     pairs: list[tuple[str, list[str]]] = []  # [(name_or_handle, [handles])]
@@ -296,9 +317,11 @@ def _resolve_names(raw: str, contacts: dict) -> str:
 
     parts = []
     for label, handles in pairs:
-        if handles:
+        if handles and not terse_when_resolved:
             parts.append(f"{label} ({', '.join(handles)})")
         else:
+            # `label` is the contact name when handles populated, the bare
+            # handle when not — so terse mode reads correctly either way.
             parts.append(label)
     return ", ".join(parts)
 
