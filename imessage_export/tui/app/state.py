@@ -105,6 +105,103 @@ def _format_window(window: dict) -> str:
     return repr(window)
 
 
+def filter_by_window(messages, window: dict) -> list:
+    """Return the subset of `messages` that falls inside `window`.
+
+    `messages` may be either Message dataclasses or the smaller
+    `{"message_id", "timestamp"}` dicts that live on
+    `state.selected_chat_messages` — both expose `.timestamp` /
+    `["timestamp"]` in the same `YYYY-MM-DD HH:MM:SS` string shape, so
+    the comparison is a stable lexical string compare.
+
+    Mode handling:
+      - `all`   → return the list unchanged.
+      - `day`   → keep messages whose date prefix matches.
+      - `range` → keep messages between from_date and to_date inclusive.
+    `start_time` / `end_time` further restrict on `HH:MM` regardless of
+    mode (applied after the date filter).
+
+    Pure function — no UI, used by both the inline WindowStrip live
+    filter and the test suite.
+    """
+    def _ts(m):
+        return m.timestamp if hasattr(m, "timestamp") else m["timestamp"]
+
+    mode = window.get("mode", "all")
+    if mode == "all":
+        return list(messages)
+    result = list(messages)
+    if mode == "day":
+        d = window.get("date")
+        if d:
+            result = [m for m in result if _ts(m)[:10] == d]
+    elif mode == "range":
+        fd = window.get("from_date") or ""
+        td = window.get("to_date") or "9999-12-31"
+        result = [m for m in result if fd <= _ts(m)[:10] <= td]
+    st = window.get("start_time")
+    et = window.get("end_time")
+    if st:
+        result = [m for m in result if _ts(m)[11:16] >= st]
+    if et:
+        result = [m for m in result if _ts(m)[11:16] <= et]
+    return result
+
+
+def apply_click_mark(state: AppState, msg_id: int) -> bool:
+    """Date-picker style range-mark click handler. Returns True iff the
+    state was mutated.
+
+    Click semantics:
+      1. No marks yet           → set start.
+      2. Only start set
+         - click on start       → no-op.
+         - click elsewhere      → set end.
+      3. Both marks set
+         - click on an existing endpoint → no-op.
+         - click elsewhere               → move the endpoint that is
+           nearer (by index in `selected_chat_messages`) to the click.
+           This extends the range when the click lands outside the
+           current span and shrinks it when it lands inside. After
+           the move, start is normalized to precede end.
+
+    Esc (handled by the caller, not here) is the explicit "clear and
+    start over" path.
+    """
+    prev = (state.range_start_msg_id, state.range_end_msg_id)
+    if state.range_start_msg_id is None:
+        state.range_start_msg_id = msg_id
+    elif state.range_end_msg_id is None:
+        if msg_id == state.range_start_msg_id:
+            return False
+        state.range_end_msg_id = msg_id
+    else:
+        if msg_id == state.range_start_msg_id or msg_id == state.range_end_msg_id:
+            return False
+        ids_in_order = [m["message_id"] for m in state.selected_chat_messages]
+        try:
+            start_idx = ids_in_order.index(state.range_start_msg_id)
+            end_idx = ids_in_order.index(state.range_end_msg_id)
+            new_idx = ids_in_order.index(msg_id)
+        except ValueError:
+            # Unknown message id — defensive no-op rather than a
+            # half-mutated state.
+            return False
+        # Move whichever endpoint sits closer to the click (ties go to
+        # the start endpoint — arbitrary but predictable).
+        if abs(new_idx - start_idx) <= abs(new_idx - end_idx):
+            state.range_start_msg_id = msg_id
+        else:
+            state.range_end_msg_id = msg_id
+        # Normalize so start always precedes end on the timeline.
+        if ids_in_order.index(state.range_start_msg_id) > ids_in_order.index(state.range_end_msg_id):
+            state.range_start_msg_id, state.range_end_msg_id = (
+                state.range_end_msg_id,
+                state.range_start_msg_id,
+            )
+    return (state.range_start_msg_id, state.range_end_msg_id) != prev
+
+
 def reset_after_export(state: AppState, *, success_tag: str) -> None:
     """Clear the range/window state after a successful export.
 

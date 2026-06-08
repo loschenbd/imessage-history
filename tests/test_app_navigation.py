@@ -88,6 +88,82 @@ class TestSidebarTypeToFilter(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(app.focused, filter_input)
                 self.assertEqual(filter_input.value, "a")
 
+    async def test_up_at_top_of_list_focuses_filter(self):
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        with _patched_app(tmpdir.name):
+            from imessage_export.tui.app.app import ImessageExportApp
+            from imessage_export.tui.app.widgets import Sidebar
+            from textual.widgets import Input, ListView
+
+            app = ImessageExportApp()
+            async with app.run_test() as pilot:
+                for _ in range(20):
+                    sidebar = app.query_one(Sidebar)
+                    if sidebar._all_chats:
+                        break
+                    await pilot.pause(delay=0.05)
+                sidebar = app.query_one(Sidebar)
+                lv = sidebar.query_one(ListView)
+                lv.index = 0
+                lv.focus()
+                await pilot.pause()
+                await pilot.press("up")
+                await pilot.pause()
+                filter_input = sidebar.query_one("#sidebar-filter", Input)
+                self.assertEqual(app.focused, filter_input)
+
+    async def test_up_mid_list_stays_in_list(self):
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        with _patched_app(tmpdir.name):
+            from imessage_export.tui.app.app import ImessageExportApp
+            from imessage_export.tui.app.widgets import Sidebar
+            from textual.widgets import ListView
+
+            app = ImessageExportApp()
+            async with app.run_test() as pilot:
+                for _ in range(20):
+                    sidebar = app.query_one(Sidebar)
+                    if sidebar._all_chats and len(sidebar._all_chats) >= 2:
+                        break
+                    await pilot.pause(delay=0.05)
+                sidebar = app.query_one(Sidebar)
+                lv = sidebar.query_one(ListView)
+                if len(sidebar._all_chats) < 2:
+                    self.skipTest("fixture needs at least 2 chats")
+                lv.index = 1
+                lv.focus()
+                await pilot.pause()
+                await pilot.press("up")
+                await pilot.pause()
+                self.assertEqual(app.focused, lv)
+                self.assertEqual(lv.index, 0)
+
+    async def test_down_in_filter_focuses_list(self):
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        with _patched_app(tmpdir.name):
+            from imessage_export.tui.app.app import ImessageExportApp
+            from imessage_export.tui.app.widgets import Sidebar
+            from textual.widgets import Input, ListView
+
+            app = ImessageExportApp()
+            async with app.run_test() as pilot:
+                for _ in range(20):
+                    sidebar = app.query_one(Sidebar)
+                    if sidebar._all_chats:
+                        break
+                    await pilot.pause(delay=0.05)
+                sidebar = app.query_one(Sidebar)
+                lv = sidebar.query_one(ListView)
+                filter_input = sidebar.query_one("#sidebar-filter", Input)
+                filter_input.focus()
+                await pilot.pause()
+                await pilot.press("down")
+                await pilot.pause()
+                self.assertEqual(app.focused, lv)
+
     async def test_esc_in_filter_clears_and_refocuses_list(self):
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)
@@ -173,6 +249,47 @@ class TestStatusLineFocusChip(unittest.IsolatedAsyncioTestCase):
                 app.query_one(ActionBar).query(Button).first().focus()
                 await pilot.pause()
                 self.assertIn("[actions]", str(status.renderable))
+
+
+@unittest.skipUnless(HAS_TUI, "[tui] extra not installed")
+class TestChatHeader(unittest.IsolatedAsyncioTestCase):
+    async def test_header_populates_on_chat_select(self):
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        with _patched_app(tmpdir.name):
+            from imessage_export.tui.app.app import ImessageExportApp
+            from imessage_export.tui.app.widgets import ChatHeader
+
+            app = ImessageExportApp()
+            async with app.run_test() as pilot:
+                await _boot_and_select_first_chat(pilot, app)
+                header = app.query_one(ChatHeader)
+                rendered = str(header.renderable)
+                # Whatever name resolution path the fixture takes, the
+                # selected chat's identifier (or the resolved name +
+                # message-count summary) has to be visible.
+                self.assertTrue(rendered.strip(), "header should not be empty")
+                self.assertIn("messages", rendered)
+
+    async def test_header_empty_when_no_selection(self):
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        with _patched_app(tmpdir.name):
+            from imessage_export.tui.app.app import ImessageExportApp
+            from imessage_export.tui.app.widgets import ChatHeader
+
+            app = ImessageExportApp()
+            async with app.run_test() as pilot:
+                await _boot_and_select_first_chat(pilot, app)
+                # Drop the selection AND clear the header in the same
+                # tick so no subsequent ChatSelected can re-populate it
+                # mid-assertion. We're verifying _refresh_chat_header()
+                # picks the empty branch when selected_chat_id is None,
+                # not the steady-state of the app.
+                app.state.selected_chat_id = None
+                app._refresh_chat_header()
+                header = app.query_one(ChatHeader)
+                self.assertEqual(str(header.renderable).strip(), "")
 
 
 @unittest.skipUnless(HAS_TUI, "[tui] extra not installed")

@@ -4,15 +4,26 @@ HistoryView, StatusLine, ActionBar are filled in by Tasks 6 / 7 / 13.
 """
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Iterable
+from datetime import date, datetime, timedelta
+from typing import Iterable, Optional
 
+from rich.style import Style
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message as TextualMessage
 from textual.widget import Widget
-from textual.widgets import Input, ListItem, ListView, Label, Static
+from textual.widgets import Button, Input, ListItem, ListView, Label, Static
+
+
+def _format_time_12h(ts: str) -> str:
+    """Convert "YYYY-MM-DD HH:MM:SS" (or "HH:MM:SS") to Messages-style "h:mm AM/PM"."""
+    hh = ts[11:13] if len(ts) >= 19 else ts[:2]
+    mm = ts[14:16] if len(ts) >= 19 else ts[3:5]
+    h = int(hh)
+    period = "AM" if h < 12 else "PM"
+    h12 = h % 12 or 12
+    return f"{h12}:{mm} {period}"
 
 
 class Sidebar(Vertical):
@@ -175,21 +186,62 @@ class HistoryView(VerticalScroll):
     HistoryView > .history-placeholder {
         padding: 2 0;
     }
+    HistoryView > .load-more-affordance {
+        color: $accent;
+        background: $accent 12%;
+        text-style: bold;
+        padding: 1 2;
+        margin: 0 0 1 0;
+        text-align: center;
+    }
+    HistoryView > .load-more-affordance:hover {
+        background: $accent 25%;
+    }
+    HistoryView > .beginning-marker {
+        color: $accent;
+        background: $accent 8%;
+        text-style: italic;
+        padding: 1 2;
+        margin: 0 0 1 0;
+        text-align: center;
+    }
     """
 
     def __init__(self, *, id: str | None = None) -> None:
         super().__init__(id=id)
         self._placeholder_visible = True
         # Progressive-load state: keep the full message list in memory but
-        # only render the last `_shown_count` to keep Textual's Strip
-        # cache small. Scroll-to-top reveals the next chunk.
+        # only render the last `_shown_count` to keep Textual's Strip cache
+        # small. The "o" binding (or clicking the affordance) reveals the
+        # next chunk.
         self._all_messages: list = []
         self._shown_count: int = 0
-        self._loading_older: bool = False
-        self._recent_widget: Static | None = None
+        # The topmost mounted CHUNK widget (not the affordance). Each
+        # successful action_load_older advances this pointer to the freshly
+        # mounted older chunk so the NEXT load mounts before the new
+        # topmost (keeping chunks in chronological order).
+        self._topmost_widget: Static | None = None
+        # Persistent clickable affordance pinned above every chunk. Lives
+        # for as long as there are unshown older messages; removed once
+        # _shown_count catches up to len(_all_messages).
+        self._load_more_widget: Static | None = None
+        # Informational marker that replaces the affordance once every
+        # older message has been loaded — gives the user a clear "you've
+        # reached the start" signal instead of nothing.
+        self._beginning_widget: Static | None = None
 
     def show_placeholder(self, text: str = "Pick a chat from the left.") -> None:
         self.remove_children()
+        # Reset progressive-load state. The old topmost chunk + affordance
+        # are being pruned by remove_children() — keep no dangling
+        # references to them, and don't let `_shown_count` from a prior
+        # chat survive (otherwise a fresh render_messages would compute
+        # its hidden_count from the wrong base).
+        self._all_messages = []
+        self._shown_count = 0
+        self._topmost_widget = None
+        self._load_more_widget = None
+        self._beginning_widget = None
         # Use a class instead of an id so that calling show_placeholder
         # twice in quick succession (remove_children is async; the prior
         # widget may still be in the node tree) doesn't collide on a
@@ -202,17 +254,24 @@ class HistoryView(VerticalScroll):
         self.show_placeholder("Loading…")
 
     PREVIEW_CAP = 2000        # initial window size (most-recent messages)
-    LOAD_MORE_CHUNK = 2000    # how many older messages to add per scroll-up
-    LOAD_MORE_THRESHOLD = 3   # trigger when scroll_y <= this many lines
+    LOAD_MORE_CHUNK = 2000    # how many older messages to add per "o" press
 
     def render_messages(self, messages: list) -> None:
-        """Open the chat at its tail and lazy-load older messages on scroll-up.
+        """Open the chat at its tail. Older messages stay hidden until the
+        user explicitly asks for them with the "o" binding.
 
-        Mounts the most-recent chunk as a Static with id "recent-chunk".
-        Older chunks are mounted ahead of it as separate Statics on each
-        scroll-up. After each load, scroll_to_widget(recent-chunk, top=True)
-        anchors the viewport at the same content the user was reading —
-        Textual handles the height math (no race against virtual_size).
+        Mounts the most-recent chunk as a Static and records it as the
+        topmost mounted chunk. Each subsequent action_load_older mounts
+        the next older chunk above the current topmost.
+
+        Why explicit instead of auto-load on scroll-up: the auto-load
+        version (PRs #24/#25 + three rounds of follow-up fixes) raced
+        against Textual's layout in ways that produced MountError crashes,
+        wrong chronological order on multi-load, and a runaway-load loop
+        that left the user stuck at scroll_y=0 with every chunk mounted.
+        Explicit triggering eliminates the whole class of races by removing
+        the implicit trigger; there's no watcher to re-enter, no anchor
+        callback to race against `virtual_size`, no stale-state path.
 
         Trade-off (carried from #22): no per-row widgets, so the
         click-a-row-to-mark-range feature doesn't work — use the Window
@@ -229,22 +288,97 @@ class HistoryView(VerticalScroll):
         visible = self._all_messages[-self._shown_count:]
         hidden = len(self._all_messages) - self._shown_count
 
-        blob = self._build_blob(visible, hidden_count=hidden)
+        blob = self._build_blob(visible)
         # Use classes (not id) — remove_children() is async, so a rapid
         # chat-switch can still have the previous "recent-chunk" in the
         # node tree when we mount the next one. Classes coexist; ids don't.
-        self._recent_widget = Static(blob, classes="history-blob recent-chunk")
-        self.mount(self._recent_widget)
+        self._topmost_widget = Static(blob, classes="history-blob recent-chunk")
+        self.mount(self._topmost_widget)
+        # Mount whichever top indicator matches state: clickable affordance
+        # if there are still older messages to fetch, otherwise a "reached
+        # the start" marker so the top of the scroll is never empty (the
+        # user always gets feedback).
+        self._refresh_top_indicator(hidden)
         self.call_after_refresh(self.scroll_end, animate=False)
 
-    def _build_blob(self, visible: list, *, hidden_count: int = 0) -> Text:
-        blob = Text()
-        if hidden_count:
-            blob.append(
-                f"── {hidden_count:,} older messages — scroll up to load more ──\n\n",
-                style="dim italic",
-            )
+    def _refresh_top_indicator(self, remaining: int) -> None:
+        """Reconcile the two top widgets with the current load state.
 
+        - remaining > 0: clickable "Load X older messages" affordance above
+          the topmost chunk; "beginning" marker is removed.
+        - remaining == 0: italic "Beginning of conversation" marker above
+          the topmost chunk; affordance is removed.
+
+        Each widget is a single long-lived Static updated in place when
+        already mounted (avoids mount/remove churn on every load).
+        """
+        topmost = self._topmost_widget
+        if remaining > 0:
+            if self._beginning_widget is not None and self._beginning_widget.parent is self:
+                self._beginning_widget.remove()
+            self._beginning_widget = None
+            if self._load_more_widget is not None and self._load_more_widget.parent is self:
+                self._load_more_widget.update(self._load_more_text(remaining))
+            else:
+                self._load_more_widget = Static(
+                    self._load_more_text(remaining),
+                    classes="history-blob load-more-affordance",
+                )
+                if topmost is not None and topmost.parent is self:
+                    self.mount(self._load_more_widget, before=topmost)
+                else:
+                    self.mount(self._load_more_widget)
+        else:
+            if self._load_more_widget is not None and self._load_more_widget.parent is self:
+                self._load_more_widget.remove()
+            self._load_more_widget = None
+            total = len(self._all_messages)
+            if total == 0:
+                if self._beginning_widget is not None and self._beginning_widget.parent is self:
+                    self._beginning_widget.remove()
+                self._beginning_widget = None
+                return
+            label = self._beginning_text(total)
+            if self._beginning_widget is not None and self._beginning_widget.parent is self:
+                self._beginning_widget.update(label)
+            else:
+                self._beginning_widget = Static(
+                    label,
+                    classes="history-blob beginning-marker",
+                )
+                if topmost is not None and topmost.parent is self:
+                    self.mount(self._beginning_widget, before=topmost)
+                else:
+                    self.mount(self._beginning_widget)
+
+    def _beginning_text(self, total: int) -> Text:
+        text = Text()
+        text.append("── ", style="dim")
+        text.append(f"Beginning of conversation  •  {total:,} total messages", style="italic")
+        text.append(" ──", style="dim")
+        return text
+
+    def _load_more_text(self, remaining: int) -> Text:
+        """Affordance label: chunk size + remaining count + how to trigger."""
+        chunk = min(self.LOAD_MORE_CHUNK, remaining)
+        text = Text()
+        text.append("⬆  ", style="bold")
+        text.append(f"Load {chunk:,} older messages", style="bold")
+        text.append(f"  •  {remaining:,} remaining  •  ", style="dim")
+        text.append("click here or press [o]", style="italic")
+        text.append("  ⬆", style="bold")
+        return text
+
+    def _build_blob(self, visible: list) -> Text:
+        """Render a chunk of messages as a single Rich Text blob.
+
+        Every message line is tagged with `meta={"msg_id": m.message_id}`
+        on its style spans. Textual surfaces that meta dict via
+        `event.style.meta` when the user clicks the line, which is how
+        click-to-mark-a-range survives the single-Static blob model
+        (we don't have per-row widgets to attach `data_msg_id` to).
+        """
+        blob = Text()
         last_date = None
         for m in visible:
             ts = m.timestamp  # "YYYY-MM-DD HH:MM:SS"
@@ -258,31 +392,41 @@ class HistoryView(VerticalScroll):
                     style="bold cyan",
                 )
                 last_date = day
-            ts_str = ts[11:19]
+            ts_str = _format_time_12h(ts)
             speaker = m.author_label or ""
             body = (m.text or "").replace("\n", "\n          ")
-            blob.append(f"[{ts_str}] ", style="dim")
-            blob.append(f"{speaker}: ", style="bold")
-            blob.append(body)
+            # Meta-tag every span on this line with the message id. A click
+            # anywhere along the line will report this id back via
+            # `event.style.meta["msg_id"]` so on_click can mark it as a
+            # range endpoint without needing per-row widgets.
+            line_meta = Style(meta={"msg_id": m.message_id})
+            blob.append(f"[{ts_str}] ", style=line_meta + Style.parse("dim"))
+            blob.append(f"{speaker}: ", style=line_meta + Style.parse("bold"))
+            blob.append(body, style=line_meta)
             blob.append("\n")
         return blob
 
-    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
-        # Reactive watcher Textual calls when scroll position changes.
-        # Load the next older chunk when the user scrolls to the top, but
-        # only while we have more cached and aren't already loading.
-        if self._loading_older:
-            return
+    # Lines of newly-loaded chunk to peek into the viewport after a load so
+    # the user can see fresh content appeared above without losing their
+    # reading position.
+    LOAD_PEEK_LINES = 3
+
+    def action_load_older(self) -> None:
+        """Reveal the next chunk of older messages above the topmost one.
+
+        Bound to "o" via BINDINGS, and also triggered when the user clicks
+        the "Load older messages" affordance pinned at the top of the
+        scroll. Preserves the user's relative scroll position across the
+        load (so they keep reading where they were), then nudges the
+        viewport up by `LOAD_PEEK_LINES` lines so a sliver of the freshly
+        mounted chunk peeks into view — visible confirmation that new
+        content was added.
+        """
         if not self._all_messages:
             return
         if self._shown_count >= len(self._all_messages):
             return
-        if new_value > self.LOAD_MORE_THRESHOLD:
-            return
-        self._load_more_older()
 
-    def _load_more_older(self) -> None:
-        self._loading_older = True
         prev_shown = self._shown_count
         new_shown = min(prev_shown + self.LOAD_MORE_CHUNK, len(self._all_messages))
         # The chunk of older messages this load reveals: everything between
@@ -291,30 +435,63 @@ class HistoryView(VerticalScroll):
             older_slice = self._all_messages[-new_shown:-prev_shown]
         else:
             older_slice = self._all_messages[-new_shown:]
-        remaining_hidden = len(self._all_messages) - new_shown
-        older_blob = self._build_blob(older_slice, hidden_count=remaining_hidden)
+        older_blob = self._build_blob(older_slice)
         self._shown_count = new_shown
+        remaining_hidden = len(self._all_messages) - new_shown
 
-        recent = self._recent_widget
+        # Capture the user's current viewing reference BEFORE the mount so
+        # we can restore their position after layout settles. The previous
+        # topmost chunk's virtual_region.y is our anchor: whatever shifts
+        # above it (a new older chunk added, the affordance possibly
+        # removed) is reflected as a delta in its virtual_region.y after
+        # the layout pass — and that's exactly the offset we need to apply
+        # to scroll_y to keep the same content under the user's cursor.
+        prev_top = self._topmost_widget
+        old_scroll_y = self.scroll_y
+        try:
+            old_top_y = prev_top.virtual_region.y if prev_top is not None else 0
+        except Exception:
+            old_top_y = 0
+
+        # Mount the new older chunk ABOVE whatever's currently topmost so
+        # chunks stay in chronological order: load N is older than load N-1,
+        # so it has to go above load N-1's widget — not above the recent
+        # chunk (which would interleave them wrong on load 2+).
+        # `parent is self`, not `is_mounted`: Textual's `_is_mounted` is
+        # sticky-True after first mount even when the widget has since been
+        # detached (e.g. by a prior `remove_children()`). `parent is self`
+        # is the truthful "still a child of mine" check, and it also
+        # returns True synchronously after `self.mount(...)` queues, so it
+        # works during the mid-mount window too.
         older_widget = Static(older_blob, classes="history-blob older")
-        if recent is not None and recent.is_mounted:
-            self.mount(older_widget, before=recent)
+        if prev_top is not None and prev_top.parent is self:
+            self.mount(older_widget, before=prev_top)
         else:
             self.mount(older_widget)
+        self._topmost_widget = older_widget
 
-        def _anchor_to_recent() -> None:
-            # Let Textual compute heights — no virtual_size race.
-            if recent is not None and recent.is_mounted:
-                try:
-                    self.scroll_to_widget(recent, top=True, animate=False)
-                except Exception:
-                    pass
-            self._loading_older = False
+        # Reconcile the top indicator: still hidden → keep/update the
+        # clickable affordance; nothing left → swap in the "beginning of
+        # conversation" marker so the user sees a clear endpoint.
+        self._refresh_top_indicator(remaining_hidden)
 
-        self.call_after_refresh(_anchor_to_recent)
+        # Defer the scroll adjustment until layout settles so
+        # prev_top.virtual_region.y reflects the post-mount position.
+        def _preserve_position_with_peek() -> None:
+            if prev_top is None or prev_top.parent is not self:
+                return
+            try:
+                new_top_y = prev_top.virtual_region.y
+                delta = new_top_y - old_top_y
+                target_y = max(0, old_scroll_y + delta - self.LOAD_PEEK_LINES)
+                self.scroll_to(y=target_y, animate=False)
+            except Exception:
+                pass
+
+        self.call_after_refresh(_preserve_position_with_peek)
 
     def _format_row(self, m) -> Text:
-        ts = m.timestamp[11:19]  # HH:MM:SS
+        ts = _format_time_12h(m.timestamp)
         speaker = m.author_label or ""
         body = (m.text or "").replace("\n", "\n          ")
         # Resolve theme palette to literal hex codes at render time. Rich's
@@ -356,10 +533,31 @@ class HistoryView(VerticalScroll):
         ("enter", "mark_row", "Mark range endpoint"),
         ("space", "mark_row", "Mark range endpoint"),
         ("escape", "clear_marks", "Clear marks"),
+        ("o", "load_older", "Load 2,000 older messages"),
     ]
 
     def on_click(self, event) -> None:
         target = event.widget
+        if target is self._load_more_widget:
+            self.action_load_older()
+            event.stop()
+            return
+        # Range-mark routing on the single-Static blob model: every
+        # message line is rendered with `meta={"msg_id": ...}` on its
+        # Rich spans, and Textual surfaces that under the click position
+        # as `event.style.meta`. If we got a msg_id back, treat the
+        # click as a "mark this message as a range endpoint" request.
+        style = getattr(event, "style", None)
+        if style is not None:
+            meta = getattr(style, "meta", None) or {}
+            msg_id = meta.get("msg_id")
+            if msg_id is not None:
+                self.post_message(self.RangeMarkRequested(int(msg_id)))
+                event.stop()
+                return
+        # Fallback for any per-row widgets that still carry data_msg_id
+        # (kept for forward-compat — currently unused after the blob
+        # rewrite, but cheap to leave).
         msg_id = getattr(target, "data_msg_id", None)
         if msg_id is not None:
             self.post_message(self.RangeMarkRequested(msg_id))
@@ -378,6 +576,14 @@ class HistoryView(VerticalScroll):
 
         `messages` is the same `selected_chat_messages` list (each {msg_id, timestamp})
         so the in-range span is contiguous in render order.
+
+        Defensive: if either marked id is missing from `messages` (e.g. the
+        user switched to a chat where the previous marks don't apply, and
+        the app-level cleanup didn't catch it), bail out silently rather
+        than crash on `list.index(x)`. The visual update is a no-op
+        anyway because the per-row widgets the old design targeted no
+        longer exist under the single-Static blob model — Phase 3 of
+        the redesign will rebuild this with per-line styling.
         """
         if start_id is None and end_id is None:
             for row in self.query(".message-row"):
@@ -386,6 +592,10 @@ class HistoryView(VerticalScroll):
             return
 
         ids_in_order = [m["message_id"] for m in messages]
+        if start_id is not None and start_id not in ids_in_order:
+            return
+        if end_id is not None and end_id not in ids_in_order:
+            return
         endpoints = {start_id, end_id} - {None}
         if start_id and end_id:
             lo, hi = sorted([ids_in_order.index(start_id), ids_in_order.index(end_id)])
@@ -435,13 +645,32 @@ class StatusLine(Static):
             self.update(f"{chip}  {state.last_export_status}")
             return
         from .state import resolved_window, _format_window
-        w = resolved_window(state)
-        window_str = _format_window(w)
-        source = {
-            "selection": "from selection",
-            "typed":     "from Window modal",
-            "all":       "everything",
-        }[state.window_source]
+        # Partial-selection hint: when the user has clicked one message
+        # but not the second yet, `resolved_window` falls through to
+        # "everything" — which would otherwise render as "everything
+        # (from selection)" and read like a contradiction. Show the
+        # start anchor + the next action the user should take.
+        if (state.window_source == "selection"
+                and state.range_start_msg_id
+                and not state.range_end_msg_id):
+            msg_by_id = {m["message_id"]: m for m in state.selected_chat_messages}
+            anchor = msg_by_id.get(state.range_start_msg_id)
+            if anchor is not None:
+                ts = anchor["timestamp"]
+                window_str = (
+                    f"start: {ts[:10]} {ts[11:16]} — click another message to set end"
+                )
+            else:
+                window_str = "1 mark set — click another message to set end"
+            source = "from selection"
+        else:
+            w = resolved_window(state)
+            window_str = _format_window(w)
+            source = {
+                "selection": "from selection",
+                "typed":     "from Window modal",
+                "all":       "everything",
+            }[state.window_source]
         contacts_str = f"contacts: {state.contacts_path.name}" if state.contacts_path else "contacts: none"
         redact_str = "redact: on" if state.redact else "redact: off"
         self.update(
@@ -454,7 +683,7 @@ class ActionBar(Horizontal):
 
     DEFAULT_CSS = """
     ActionBar {
-        height: 3;
+        height: 4;
         padding: 0 1;
         border-top: solid $accent;
     }

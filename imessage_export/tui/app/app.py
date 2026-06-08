@@ -214,9 +214,33 @@ class ImessageExportApp(App):
         self.state.history_loading = True
         history = self.query_one(HistoryView)
         history.show_loading()
+        self._refresh_chat_header()
         self._load_history_worker(event.chat_id)
         self._refresh_status()
         self._persist_defaults()
+
+    def _refresh_chat_header(self) -> None:
+        """Repaint the chat header from current state.
+
+        Called on chat selection AND when contacts load late, so a header
+        that initially rendered "+15551234567" gets upgraded to
+        "Beautiful Wife (+1555…)" the moment the contacts file resolves.
+        """
+        try:
+            header = self.query_one(ChatHeader)
+        except Exception:
+            return
+        if self.state.selected_chat_id is None:
+            header.show_empty()
+            return
+        chat_row = next(
+            (c for c in self.state.chats if c.get("chat_id") == self.state.selected_chat_id),
+            None,
+        )
+        if chat_row is None:
+            header.show_empty()
+            return
+        header.update_from_chat(chat_row, self.state.contacts)
 
     @work(thread=True, exclusive=True)
     def _load_history_worker(self, chat_id: int) -> None:
@@ -254,6 +278,16 @@ class ImessageExportApp(App):
         self.state.selected_chat_messages = [
             {"message_id": m.message_id, "timestamp": m.timestamp} for m in event.messages
         ]
+        # Range marks from the previous chat don't apply to this one —
+        # their message_ids belong to a different chat. Clear them
+        # before any code path (StatusLine refresh, apply_marks, the
+        # next click) tries to resolve them against the new
+        # `selected_chat_messages` and crashes on list.index(...).
+        if self.state.range_start_msg_id is not None or self.state.range_end_msg_id is not None:
+            self.state.range_start_msg_id = None
+            self.state.range_end_msg_id = None
+            if self.state.window_source == "selection":
+                self.state.window_source = "typed" if self.state.typed_window else "all"
         self.state.history_loading = False
         history = self.query_one(HistoryView)
         history.render_messages(event.messages)
@@ -292,17 +326,16 @@ class ImessageExportApp(App):
         self._repaint_marks()
 
     def _mark_message(self, msg_id: int) -> None:
-        s = self.state
-        if s.range_start_msg_id is None:
-            s.range_start_msg_id = msg_id
-        elif s.range_end_msg_id is None and msg_id != s.range_start_msg_id:
-            s.range_end_msg_id = msg_id
-        else:
-            # Third click / re-click: clear and start over.
-            s.range_start_msg_id = msg_id
-            s.range_end_msg_id = None
-        s.window_source = "selection"
-        s.last_export_status = None
+        """Apply a click on `msg_id` to the range marks. Delegates to
+        the pure helper `state.apply_click_mark`; this method only
+        handles the UI side-effects (window_source, status refresh)
+        and skips them on no-op clicks so a duplicate click doesn't
+        flip the user out of, say, the typed-window source."""
+        from .state import apply_click_mark
+        if not apply_click_mark(self.state, msg_id):
+            return
+        self.state.window_source = "selection"
+        self.state.last_export_status = None
         self._refresh_status()
 
     def _repaint_marks(self) -> None:
