@@ -17,7 +17,7 @@ from ...cli import DEFAULT_DB
 from ...db import list_recent_chats, open_db
 from ..defaults import Defaults, load as load_defaults
 from .state import AppState
-from .widgets import HistoryView, Sidebar, StatusLine
+from .widgets import ChatHeader, HistoryView, Sidebar, StatusLine
 
 
 class HistoryLoaded(TextualMessage):
@@ -43,10 +43,13 @@ class ImessageExportApp(App):
     CSS = """
     Screen { layout: vertical; background: $background; color: $foreground; }
     #main { height: 1fr; }
+    #history-pane { width: 1fr; height: 1fr; }
 
     Sidebar { background: $surface; border-right: solid $panel; }
     Sidebar > .selected { background: $panel; color: $primary; text-style: bold; }
     Sidebar.region-active { border-right: thick $accent; }
+
+    ChatHeader { background: $surface; border-bottom: solid $panel; }
 
     HistoryView { background: $background; color: $foreground; }
     HistoryView.region-active { border-left: thick $accent; }
@@ -95,10 +98,15 @@ class ImessageExportApp(App):
         )
 
     def compose(self) -> ComposeResult:
+        from textual.containers import Vertical
         from .widgets import ActionBar, StatusLine
         yield Horizontal(
             Sidebar(chats=[], contacts={}, id="sidebar"),
-            HistoryView(id="history"),
+            Vertical(
+                ChatHeader(id="chat-header"),
+                HistoryView(id="history"),
+                id="history-pane",
+            ),
             id="main",
         )
         yield StatusLine(id="status")
@@ -195,6 +203,9 @@ class ImessageExportApp(App):
         except Exception:
             pass
         sidebar._refresh_list(current_filter)
+        # Header may have rendered the raw handle before contacts arrived;
+        # re-render now that the resolver has names to work with.
+        self._refresh_chat_header()
 
     async def _offer_contacts_scan(self) -> None:
         from .modals import ContactsScanModal

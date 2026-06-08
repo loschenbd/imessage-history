@@ -231,8 +231,14 @@ def _step_pick_chat(conn, defaults: Defaults, contacts: dict) -> tuple[Optional[
     return chat_id, row
 
 
-def _format_chat_row(r: dict, contacts: dict) -> str:
-    """Format one chat row for the picker."""
+def _format_chat_row(r: dict, contacts: dict, *, include_id: bool = True) -> str:
+    """Format one chat row for the picker.
+
+    `include_id=False` drops the leading `[chat_id]` token — the TUI sidebar
+    uses this since the id is a debug crutch the user doesn't filter or read
+    by. The wizard's questionary picker keeps it so curious users can still
+    cross-reference against `--list` output.
+    """
     raw_who = (
         r.get("display_name")
         or r.get("participants")
@@ -245,8 +251,11 @@ def _format_chat_row(r: dict, contacts: dict) -> str:
     kind = r.get("style", "")
     msgs = r.get("msg_count", "?")
     last = r.get("last_message_local") or "—"
+    body = f"{who} · {kind} · {msgs} msgs · last {last}"
+    if not include_id:
+        return body
     rid = r.get("chat_id", "?")
-    return f"[{rid}] {who} · {kind} · {msgs} msgs · last {last}"
+    return f"[{rid}] {body}"
 
 
 def _resolve_names(raw: str, contacts: dict) -> str:

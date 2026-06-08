@@ -380,6 +380,8 @@ class HelpModal(ModalScreen[None]):
                 "\n"
                 "Sidebar\n"
                 "  (type letters)        Filter the chat list\n"
+                "  ↑ at top row          Jump up into the filter\n"
+                "  ↓ in filter           Jump down into the chat list\n"
                 "  Enter                 Open the highlighted chat\n"
                 "\n"
                 "History\n"

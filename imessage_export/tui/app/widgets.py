@@ -67,9 +67,11 @@ class Sidebar(Vertical):
         self._refresh_list("")
 
     def _format_row(self, row: dict) -> str:
-        # Reuse the same display approach the wizard uses.
+        # Reuse the wizard's formatter but drop the `[chat_id]` prefix —
+        # the id is opaque to the user and just adds visual noise in the
+        # narrow sidebar column.
         from ..wizard import _format_chat_row
-        return _format_chat_row(row, self._contacts)
+        return _format_chat_row(row, self._contacts, include_id=False)
 
     def _refresh_list(self, query: str) -> None:
         list_view = self.query_one("#sidebar-list", ListView)
@@ -123,15 +125,21 @@ class Sidebar(Vertical):
                 break
 
     def on_key(self, event) -> None:
-        """Type-to-filter: redirect printable keystrokes from the list to the filter.
+        """Type-to-filter + arrow-key bridge between filter input and chat list.
 
         - When the list has focus and the user types a printable single character,
           focus the filter input and forward the character via insert_text_at_cursor.
+        - When the list has focus at the top row and Up is pressed, focus the
+          filter input. Lets the user reach the filter from the list using the
+          same arrow keys they're already using to scroll the list — no Tab,
+          no mouse, no separate keybinding to remember.
+        - When the filter has focus and Down is pressed, focus the list. Mirrors
+          the list→filter Up bridge so the pair feels symmetric.
         - When the filter has focus and Esc is pressed, clear the filter and refocus
           the list. Esc events from widgets outside the sidebar pass through (the
           `focused is filter_input` guard ensures we don't swallow them).
-        - Arrow keys are non-printable (`event.character is None`), so they always
-          flow through to whatever widget currently has focus.
+        - Other arrow-key presses (Down in list, Up in filter, Up/Down mid-list)
+          fall through to the focused widget's default behavior.
         """
         list_view = self.query_one("#sidebar-list", ListView)
         filter_input = self.query_one("#sidebar-filter", Input)
@@ -149,12 +157,93 @@ class Sidebar(Vertical):
             event.stop()
             return
 
+        if focused is list_view and event.key == "up":
+            # Only bridge when the highlight is at the top (or the list is
+            # empty after a filter narrowed it to nothing). Otherwise let
+            # ListView's own cursor_up handle the press.
+            if list_view.index is None or list_view.index == 0:
+                filter_input.focus()
+                event.prevent_default()
+                event.stop()
+                return
+
+        if focused is filter_input and event.key == "down":
+            list_view.focus()
+            event.prevent_default()
+            event.stop()
+            return
+
         if focused is filter_input and event.key == "escape":
             filter_input.value = ""
             list_view.focus()
             event.prevent_default()
             event.stop()
             return
+
+
+class ChatHeader(Static):
+    """One-line summary of the currently rendered chat.
+
+    Sits directly above the HistoryView and gets refreshed every time the
+    user picks a different chat (or when contacts load late and resolve
+    a previously-bare handle into a real name). Deliberately discreet —
+    muted color, single line, no controls — because the meaningful
+    interaction surface is the history below it.
+    """
+
+    DEFAULT_CSS = """
+    ChatHeader {
+        height: 1;
+        padding: 0 2;
+        color: $foreground;
+        background: $panel;
+    }
+    """
+
+    def show_empty(self) -> None:
+        self.update("")
+
+    def update_from_chat(self, chat_row: dict, contacts: dict) -> None:
+        # Reuse the wizard's handle→name resolver so the header reads as
+        # the same person the sidebar row points at, minus the "last X"
+        # timestamp (which is redundant once messages are rendered).
+        from ..wizard import _resolve_names
+        raw_who = (
+            chat_row.get("display_name")
+            or chat_row.get("participants")
+            or chat_row.get("chat_identifier")
+            or "(unknown)"
+        )
+        who = _resolve_names(raw_who, contacts) if contacts else raw_who
+        kind = chat_row.get("style", "")
+        msgs = chat_row.get("msg_count")
+        last = chat_row.get("last_message_local")
+
+        # Title in the active accent so the user can spot the header at a
+        # glance; metadata in dim so it stays in the background. The
+        # accent hex comes from the theme palette (Rich can't parse
+        # Textual's `$accent` markup in style strings — same constraint
+        # HistoryView._format_row works around).
+        from ..theme import PALETTES, DAWNFOX
+        try:
+            pal = PALETTES[self.app.theme]
+        except (KeyError, AttributeError):
+            pal = DAWNFOX
+        accent_hex = pal.get("accent") or pal.get("accent_alt") or ""
+
+        text = Text()
+        title_style = f"bold {accent_hex}" if accent_hex else "bold"
+        text.append(who, style=title_style)
+        if kind:
+            text.append("  ·  ", style="dim")
+            text.append(kind, style="dim")
+        if isinstance(msgs, int):
+            text.append("  ·  ", style="dim")
+            text.append(f"{msgs:,} messages", style="dim")
+        if last:
+            text.append("  ·  ", style="dim")
+            text.append(f"last {last}", style="dim")
+        self.update(text)
 
 
 class HistoryView(VerticalScroll):
