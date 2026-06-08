@@ -175,11 +175,12 @@ class TestHistoryViewCursor(unittest.IsolatedAsyncioTestCase):
             marks = [m for m in posted if isinstance(m, HistoryView.RangeMarkRequested)]
             self.assertEqual(marks, [])
 
-    async def test_cursor_gutter_marker_renders_on_exactly_one_row(self):
-        """The blob's plain text must show the ▸ marker once — on the
-        cursored row — and nowhere else. The marker is what makes
-        keyboard focus visible to the user."""
+    async def test_cursor_visual_renders_on_exactly_one_row(self):
+        """The cursored row must carry both the B (row tint) and D
+        (cursor bar) backgrounds; no other row carries either."""
         from imessage_export.tui.app.widgets import HistoryView
+        from imessage_export.tui.app import history_render
+        from imessage_export.tui.theme import DAWNFOX
 
         app, HistoryView = self._build_stub_app()
         async with app.run_test() as pilot:
@@ -187,9 +188,18 @@ class TestHistoryViewCursor(unittest.IsolatedAsyncioTestCase):
             history.render_messages(_fake_messages(5))
             await pilot.pause()
 
-            text = history._topmost_widget.renderable.plain
-            # Cursor defaulted to the last message — exactly one ▸ marker.
-            self.assertEqual(text.count("▸"), 1)
+            colors = history_render.selection_colors(DAWNFOX)
+            blob = history._topmost_widget.renderable
+            # Exactly one row carries the cursor tint background.
+            tint_spans = [s for s in blob.spans
+                          if colors.cursor_tint_bg in str(s.style)]
+            self.assertEqual(len(tint_spans), 1)
+            # Exactly one row carries the cursor bar background on its
+            # leading 2 cols.
+            bar_spans = [s for s in blob.spans
+                         if colors.cursor_bar_default in str(s.style)
+                         and (s.end - s.start) == 2]
+            self.assertEqual(len(bar_spans), 1)
 
     async def test_cursor_move_repaints_only_affected_chunk(self):
         """Moving the cursor by one message must only repaint the

@@ -243,16 +243,29 @@ class TestHistoryViewRangeMarks(unittest.IsolatedAsyncioTestCase):
             history.render_messages(_fake_messages(5))
             await pilot.pause()
 
-            endpoint_bg, range_bg, _ = history._selection_colors()
+            # Use selection_colors so this test follows the palette
+            # adapter rather than hard-coding theme hex values.
+            from imessage_export.tui.app import history_render
+            from imessage_export.tui.theme import DAWNFOX
+            colors = history_render.selection_colors(DAWNFOX)
+            endpoint_bg = colors.endpoint_bg
+            range_bg = colors.range_bg
             self.assertTrue(endpoint_bg and range_bg,
                             "test theme must expose accent + accent_alt — "
                             "otherwise the background-highlight contract is moot")
 
-            # Before marks: no span carries either selection background.
+            # Before marks: no ROW-level span carries either selection
+            # background. The cursor bar (2-col span) shares the
+            # `accent_alt` hex with `endpoint_bg`, so we filter the
+            # leading-2-col cursor-bar spans out — only wider, row-level
+            # backgrounds are evidence of selection paint.
+            def _row_level_spans(blob):
+                return [s for s in blob.spans if (s.end - s.start) > 2]
+
             blob_before = history._topmost_widget.renderable
             self.assertFalse(
                 any(endpoint_bg in str(s.style) or range_bg in str(s.style)
-                    for s in blob_before.spans),
+                    for s in _row_level_spans(blob_before)),
                 "no selection backgrounds expected before apply_marks",
             )
 
@@ -261,11 +274,11 @@ class TestHistoryViewRangeMarks(unittest.IsolatedAsyncioTestCase):
             history.apply_marks(1, 3, messages)
             await pilot.pause()
 
-            # After marks(1, 3): the rendered blob's style spans must
-            # include BOTH the endpoint background (msgs 1 and 3) and
-            # the in-range background (msg 2).
+            # After marks(1, 3): the rendered blob's row-level style
+            # spans must include BOTH the endpoint background (msgs 1
+            # and 3) and the in-range background (msg 2).
             blob_after = history._topmost_widget.renderable
-            style_strs = [str(s.style) for s in blob_after.spans]
+            style_strs = [str(s.style) for s in _row_level_spans(blob_after)]
             self.assertTrue(
                 any(endpoint_bg in s for s in style_strs),
                 f"endpoint background ({endpoint_bg}) MUST appear after apply_marks(1, 3)",

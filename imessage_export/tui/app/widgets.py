@@ -747,98 +747,21 @@ class HistoryView(VerticalScroll):
             pal.get("bg", ""),           # text color that stays readable on either
         )
 
-    def _build_blob(self, visible: list) -> Text:
-        """Render a chunk of messages as a single Rich Text blob.
+    def _build_blob(self, visible: list):
+        """Bridge for callers that still expect a single Text blob.
 
-        Every message line is tagged with `meta={"msg_id": m.message_id}`
-        on its style spans. Textual surfaces that meta dict via
-        `event.style.meta` when the user clicks the line, which is how
-        click-to-mark-a-range survives the single-Static blob model
-        (we don't have per-row widgets to attach `data_msg_id` to).
-
-        Selection highlight paints the full message line:
-          - endpoints render with the `accent_alt` background (the distinct
-            anchor color) in bold, so the two range edges pop;
-          - in-range lines render with the `accent` background — the same
-            color family as the endpoints so the band reads as one
-            selection, but a different hue so endpoints stay legible
-            against it.
-        On a selected row, the per-span `dim` timestamp style is dropped —
-        dim text on a saturated background reads as washed-out. The
-        speaker stays bold because bold layers cleanly on a colored bg.
+        Internally, the chunk is built fresh and decorated with the
+        current selection state. Mostly used by tests that snapshot the
+        Static's renderable; the live render/repaint paths go through
+        `_ChunkRender.build` + `history_render.paint` directly without
+        this helper.
         """
-        blob = Text()
-        last_date = None
-        endpoints = {self._mark_start_id, self._mark_end_id} - {None}
-        in_range = self._in_range_ids
-        cursor_id = self._cursor_msg_id
-        endpoint_bg, range_bg, contrast_fg = self._selection_colors()
-        for m in visible:
-            ts = m.timestamp  # "YYYY-MM-DD HH:MM:SS"
-            day = ts[:10]
-            if day != last_date:
-                dt = datetime.strptime(day, "%Y-%m-%d")
-                if last_date is not None:
-                    blob.append("\n")
-                # Day-header isn't a selectable row; render it flush-left
-                # with no row-level selection styling.
-                blob.append(
-                    f"── {dt.strftime('%A, %B %-d, %Y')} ──\n",
-                    style="bold cyan",
-                )
-                last_date = day
-
-            is_endpoint = m.message_id in endpoints
-            is_in_range = (not is_endpoint) and m.message_id in in_range
-            if is_endpoint and endpoint_bg and contrast_fg:
-                row_style = f"bold {contrast_fg} on {endpoint_bg}"
-                ts_style = ""        # drop dim so the timestamp reads on the bg
-                speaker_style = "bold"
-            elif is_in_range and range_bg and contrast_fg:
-                row_style = f"{contrast_fg} on {range_bg}"
-                ts_style = ""        # ditto — dim washes out on a colored row
-                speaker_style = "bold"
-            else:
-                row_style = ""
-                ts_style = "dim"
-                speaker_style = "bold"
-
-            ts_str = _format_time_12h(ts)
-            speaker = m.author_label or ""
-            body = (m.text or "").replace("\n", "\n" + self._WRAP_INDENT)
-
-            is_cursor = m.message_id == cursor_id
-            gutter_str = self._CURSOR_MARKER if is_cursor else self._GUTTER_BLANK
-            # `bold` so the marker pops without needing a fg color —
-            # on selected rows it inherits `contrast_fg` from row_style.
-            gutter_style = "bold" if is_cursor else ""
-
-            # Meta-tag every span on this line with the message id. A click
-            # anywhere along the line — gutter, timestamp, speaker, body —
-            # reports this id back via `event.style.meta["msg_id"]` so
-            # on_click can mark it as a range endpoint without per-row
-            # widgets.
-            line_meta = Style(meta={"msg_id": m.message_id})
-
-            def _meta_style(extra: str) -> Style:
-                # Module-level `_parse_style` memoizes the parse; per-line
-                # `+ line_meta` is cheap (just a dict merge for the meta).
-                return line_meta + _parse_style(extra)
-
-            line = Text()
-            line.append(gutter_str, style=_meta_style(gutter_style))
-            line.append(f"[{ts_str}] ", style=_meta_style(ts_style))
-            line.append(f"{speaker}: ", style=_meta_style(speaker_style))
-            line.append(body, style=_meta_style(""))
-            line.append("\n")
-            if row_style:
-                # Apply the row-level background + foreground as the base
-                # style. Per-span styles (the `bold` speaker) layer on top
-                # without losing the background, because Rich treats bold
-                # as a modifier rather than a fg/bg override.
-                line.stylize(row_style)
-            blob.append(line)
-        return blob
+        from . import history_render
+        chunk = history_render._ChunkRender.build(visible, self._contacts)
+        marks = history_render.MarkState(
+            self._mark_start_id, self._mark_end_id, frozenset(self._in_range_ids))
+        return history_render.paint(
+            chunk, self._cursor_msg_id, marks, self._palette())
 
     def _accent_hex(self) -> str:
         """Return the active theme's accent hex, or "" if unavailable."""
@@ -1202,29 +1125,33 @@ class HistoryView(VerticalScroll):
         # what makes click feedback feel instant.
         self._rerender_chunks(old_highlighted | new_highlighted)
 
-    def _rerender_chunks(self, affected_ids: set[int] | None = None) -> None:
-        """Rebuild chunk Statics whose ids intersect `affected_ids`.
+    def _repaint_for_ids(self, affected_ids: set[int] | None = None) -> None:
+        """Repaint chunks whose ids intersect `affected_ids`.
 
-        Iterates `self.children` and only touches widgets that carry a
-        `_chunk_messages` attribute — that's how we distinguish actual
-        message chunks from the WindowStrip / ChatHeader siblings, the
-        load-more affordance, and the beginning marker (none of which
-        should be repainted on mark changes).
-
-        When `affected_ids` is None, every chunk is rebuilt — the
-        original full-redraw behavior, kept for callers (and tests)
-        that don't have a precise "what changed" set. When it's a set,
-        chunks whose `_chunk_ids` don't intersect it are skipped.
+        When `affected_ids` is None, every chunk is repainted —
+        used by the cold-load path. With a set, chunks whose
+        `_chunk_ids` don't intersect are skipped (the perf invariant
+        from PR #248eaec — pinned by the repaint-only-affected test).
         """
+        from . import history_render
+        palette = self._palette()
+        marks = history_render.MarkState(
+            self._mark_start_id, self._mark_end_id, frozenset(self._in_range_ids))
         for child in list(self.children):
-            slice_msgs = getattr(child, "_chunk_messages", None)
-            if slice_msgs is None:
+            chunk: history_render._ChunkRender | None = getattr(
+                child, "_chunk_render", None)
+            if chunk is None:
                 continue
-            if affected_ids is not None:
-                chunk_ids = getattr(child, "_chunk_ids", None)
-                if chunk_ids is not None and not (chunk_ids & affected_ids):
-                    continue
-            child.update(self._build_blob(slice_msgs))
+            if affected_ids is not None and not (set(chunk.msg_ids) & affected_ids):
+                continue
+            decorated = history_render.paint(
+                chunk, self._cursor_msg_id, marks, palette)
+            child.update(decorated)
+
+    # Back-compat alias so apply_marks and _move_cursor don't need to
+    # change yet. Removed in a later cleanup task.
+    def _rerender_chunks(self, affected_ids: set[int] | None = None) -> None:
+        self._repaint_for_ids(affected_ids)
 
 
 # ---------------------------------------------------------------------------
