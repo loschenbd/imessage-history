@@ -512,6 +512,15 @@ class HistoryView(VerticalScroll):
         # cursored row so the user can see where their keyboard focus
         # sits. None means "no cursor" (e.g. before any chat is loaded).
         self._cursor_msg_id: int | None = None
+        # O(1) msg_id → index lookup for cursor moves + stale-id
+        # detection. Rebuilt by render_messages and extended by
+        # action_load_older.
+        self._id_to_index: dict[int, int] = {}
+        # Shift+arrow selection state. anchor is set on first
+        # shift+arrow press; active follows the cursor while shift is
+        # held. Plain Up/Down clears both.
+        self._mark_anchor_id: int | None = None
+        self._mark_active_id: int | None = None
         # Contacts mapping forwarded to history_render.format_row. Empty
         # by default — currently unused by the formatter (forward-compat
         # for handle→display-name swap-in), kept so _ChunkRender.build
@@ -526,6 +535,7 @@ class HistoryView(VerticalScroll):
         # chat survive (otherwise a fresh render_messages would compute
         # its hidden_count from the wrong base).
         self._all_messages = []
+        self._id_to_index = {}
         self._unfiltered_messages = []
         self._shown_count = 0
         self._topmost_widget = None
@@ -566,6 +576,7 @@ class HistoryView(VerticalScroll):
         if not _from_filter:
             self._unfiltered_messages = list(messages)
         self._all_messages = list(messages)
+        self._id_to_index = {m.message_id: i for i, m in enumerate(self._all_messages)}
         self.remove_children()
         self._placeholder_visible = False
         if not self._all_messages:
@@ -811,6 +822,9 @@ class HistoryView(VerticalScroll):
         older_decorated = history_render.paint(
             chunk, self._cursor_msg_id, marks, self._palette())
         self._shown_count = new_shown
+        # _id_to_index is already complete (every loaded message lives
+        # in _all_messages from chat-load time — load-older only widens
+        # _shown_count). No rebuild needed here.
         remaining_hidden = len(self._all_messages) - new_shown
 
         # Capture the user's current viewing reference BEFORE the mount so
@@ -979,38 +993,25 @@ class HistoryView(VerticalScroll):
         self._move_cursor(+1)
 
     def _move_cursor(self, delta: int) -> None:
-        """Advance the keyboard cursor by `delta` messages and repaint.
-
-        Clamps to the loaded-message bounds (no wrap) — the user always
-        knows where the ends are. Repaints only the chunk(s) holding the
-        old and new cursor rows so the response stays fast even on long
-        chats. After moving, asks the parent VerticalScroll to bring the
-        cursor's chunk into view if it scrolled off-screen.
-        """
         if not self._all_messages or self._cursor_msg_id is None:
             return
-        ids = [m.message_id for m in self._all_messages]
-        try:
-            i = ids.index(self._cursor_msg_id)
-        except ValueError:
-            # Cursor refers to an id no longer in the loaded list
-            # (chat-switch race). Reset to the latest message instead
-            # of crashing — same recovery pattern apply_marks uses.
+        i = self._id_to_index.get(self._cursor_msg_id)
+        if i is None:
+            # Stale cursor — chat-switch race. Park on the latest.
             self._cursor_msg_id = self._all_messages[-1].message_id
-            self._rerender_chunks({self._cursor_msg_id})
+            self._repaint_for_ids({self._cursor_msg_id})
             self._scroll_cursor_into_view()
             return
-        new_i = max(0, min(len(ids) - 1, i + delta))
+        new_i = max(0, min(len(self._all_messages) - 1, i + delta))
         if new_i == i:
-            return  # already at a bound; nothing to repaint
+            return
         old_id = self._cursor_msg_id
-        new_id = ids[new_i]
+        new_id = self._all_messages[new_i].message_id
         self._cursor_msg_id = new_id
-        # Only the two rows that changed need a repaint — old loses its
-        # marker, new gains one. _rerender_chunks intersects this against
-        # each chunk's `_chunk_ids`, so chunks that contain neither are
-        # skipped (the perf invariant from the previous commit).
-        self._rerender_chunks({old_id, new_id})
+        # Clear any in-progress shift+arrow extension on a plain Up/Down.
+        self._mark_anchor_id = None
+        self._mark_active_id = None
+        self._repaint_for_ids({old_id, new_id})
         self._scroll_cursor_into_view()
 
     def _scroll_cursor_into_view(self) -> None:

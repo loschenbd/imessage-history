@@ -237,6 +237,17 @@ class TestHistoryViewCursor(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(updates[id(older_chunk)], 0,
                              "older chunk doesn't hold the cursor row; must NOT repaint")
 
+    async def test_id_to_index_built_after_render(self):
+        """`_id_to_index` is the O(1) map cursor moves and stale-id
+        recovery both depend on. Must be in sync with `_all_messages`
+        after every render."""
+        app, HistoryView = self._build_stub_app()
+        async with app.run_test() as pilot:
+            history = app.query_one(HistoryView)
+            history.render_messages(_fake_messages(10))
+            await pilot.pause()
+            self.assertEqual(history._id_to_index, {i: i for i in range(10)})
+
 
 if __name__ == "__main__":
     unittest.main()
