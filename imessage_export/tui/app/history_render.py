@@ -108,10 +108,9 @@ class _ChunkRender:
         the unstyled blob + offset/line-count/day-header tables.
 
         Day-header rows are emitted at the top and at every calendar
-        boundary, styled `bold cyan` (same as the legacy _build_blob).
-        They contribute to the base text but not to `row_offsets` —
-        clicks on a header line carry no msg_id meta, which matches
-        today's behavior.
+        boundary, styled `bold cyan`. They contribute to the base text
+        but not to `row_offsets` — clicks on a header line carry no
+        msg_id meta, which matches today's behavior.
         """
         msgs = list(messages)
         base = Text()

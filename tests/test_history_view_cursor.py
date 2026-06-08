@@ -217,12 +217,14 @@ class TestHistoryViewCursor(unittest.IsolatedAsyncioTestCase):
             history.action_load_older()
             await pilot.pause()
 
-            chunks = [c for c in history.children if getattr(c, "_chunk_ids", None)]
+            chunks = [c for c in history.children
+                      if getattr(c, "_chunk_render", None) is not None]
             self.assertGreaterEqual(len(chunks), 2)
             older_chunk = chunks[0]
             newer_chunk = chunks[-1]
             # Cursor starts on the latest message (in newer_chunk).
-            self.assertIn(history._cursor_msg_id, newer_chunk._chunk_ids)
+            self.assertIn(history._cursor_msg_id,
+                          set(newer_chunk._chunk_render.msg_ids))
 
             updates = {id(older_chunk): 0, id(newer_chunk): 0}
             orig_older, orig_newer = older_chunk.update, newer_chunk.update

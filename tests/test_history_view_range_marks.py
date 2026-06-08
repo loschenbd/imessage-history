@@ -155,9 +155,9 @@ class TestHistoryViewRangeMarks(unittest.IsolatedAsyncioTestCase):
     async def test_apply_marks_updates_in_range_set(self):
         """apply_marks must populate `_mark_start_id`, `_mark_end_id`,
         and `_in_range_ids` from the provided messages list. The set
-        is what `_build_blob` consults to decide which lines get the
-        in-range tint, so wiring this correctly is the load-bearing
-        bit of the Phase 3 visual highlight."""
+        is what `history_render.paint` consults to decide which lines
+        get the in-range tint, so wiring this correctly is the load-
+        bearing bit of the Phase 3 visual highlight."""
         from imessage_export.tui.app.widgets import HistoryView
 
         app, HistoryView = self._build_stub_app()
@@ -375,16 +375,19 @@ class TestHistoryViewRangeMarks(unittest.IsolatedAsyncioTestCase):
             history.action_load_older()
             await pilot.pause()
 
-            # Identify the two chunk Statics (those with _chunk_ids).
-            chunks = [c for c in history.children if getattr(c, "_chunk_ids", None)]
+            # Identify the two chunk Statics (those with a _chunk_render).
+            chunks = [c for c in history.children
+                      if getattr(c, "_chunk_render", None) is not None]
             self.assertGreaterEqual(len(chunks), 2,
                                     "test needs ≥2 chunks to verify the skip")
             chunk_a, chunk_b = chunks[0], chunks[-1]
 
             # Pick an id that lives ONLY in chunk_b — anchors the range
             # inside that chunk, leaving chunk_a outside the selection.
-            target_id = next(iter(chunk_b._chunk_ids))
-            self.assertNotIn(target_id, chunk_a._chunk_ids,
+            chunk_a_ids = set(chunk_a._chunk_render.msg_ids)
+            chunk_b_ids = set(chunk_b._chunk_render.msg_ids)
+            target_id = next(iter(chunk_b_ids))
+            self.assertNotIn(target_id, chunk_a_ids,
                              "pre-condition: target lives in chunk_b only")
 
             # Spy on .update() calls per chunk.

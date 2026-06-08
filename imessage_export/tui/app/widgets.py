@@ -16,8 +16,8 @@ from textual.widget import Widget
 from textual.widgets import Button, Input, ListItem, ListView, Label, Static
 
 
-# Per-run cache for Style.parse — called 3× per message line in
-# `_build_blob`, so for a 2000-message chunk that's 6000 parses per
+# Per-run cache for Style.parse — called 3× per message line during a
+# chunk repaint, so for a 2000-message chunk that's 6000 parses per
 # repaint. Parsed Style objects are immutable and safe to share across
 # every blob and every chunk; the cache trims that to ~5 parses total
 # (one per distinct style string we use).
@@ -498,19 +498,20 @@ class HistoryView(VerticalScroll):
         # reached the start" signal instead of nothing.
         self._beginning_widget: Static | None = None
         # Range-mark visual state. Mirrors `app.state.range_*_msg_id`
-        # for the duration of a render so `_build_blob` can paint the
-        # endpoints and in-range lines without re-querying app state
-        # for every message. Updated by `apply_marks` and consumed on
-        # every `_build_blob` call.
+        # for the duration of a render so `history_render.paint` can
+        # paint the endpoints and in-range lines without re-querying
+        # app state for every message. Updated by `apply_marks` and
+        # consumed by every `_repaint_for_ids` call.
         self._mark_start_id: int | None = None
         self._mark_end_id: int | None = None
         self._in_range_ids: set[int] = set()
         # Keyboard cursor. Independent of the mark endpoints — the user
         # moves the cursor row-by-row with up/down arrows, and then
         # presses space/enter to drop a range endpoint at the cursor
-        # position. _build_blob paints a `▸ ` gutter marker on the
-        # cursored row so the user can see where their keyboard focus
-        # sits. None means "no cursor" (e.g. before any chat is loaded).
+        # position. `history_render.paint` paints a `▸ ` gutter marker
+        # on the cursored row so the user can see where their keyboard
+        # focus sits. None means "no cursor" (e.g. before any chat is
+        # loaded).
         self._cursor_msg_id: int | None = None
         # O(1) msg_id → index lookup for cursor moves + stale-id
         # detection. Rebuilt by render_messages and extended by
@@ -621,12 +622,9 @@ class HistoryView(VerticalScroll):
         self._topmost_widget = Static(decorated, classes="history-blob recent-chunk")
         chunk.widget = self._topmost_widget
         # Stash the full _ChunkRender on the widget so _repaint_for_ids
-        # can find it later. Old _chunk_messages / _chunk_ids attrs are
-        # kept (for now) so the existing affected-ids skip path stays
-        # wired; both are owned by the new dataclass in a later task.
+        # can find it later. `chunk.msg_ids` is the single source of
+        # truth for which messages this chunk owns.
         self._topmost_widget._chunk_render = chunk  # type: ignore[attr-defined]
-        self._topmost_widget._chunk_messages = visible  # type: ignore[attr-defined]
-        self._topmost_widget._chunk_ids = set(chunk.msg_ids)  # type: ignore[attr-defined]
         self.mount(self._topmost_widget)
         # Mount whichever top indicator matches state: clickable affordance
         # if there are still older messages to fetch, otherwise a "reached
@@ -780,50 +778,6 @@ class HistoryView(VerticalScroll):
         except (KeyError, AttributeError):
             return DAWNFOX
 
-    def _selection_colors(self) -> tuple[str, str, str]:
-        """Return (endpoint_bg, range_bg, contrast_fg) hex codes for the
-        active theme.
-
-        Endpoint and in-range backgrounds are pulled from the palette's
-        two accent slots so they're visually related but distinct — the
-        eye can pick out the anchors from the band at a glance without
-        the colors clashing.
-
-        Foreground is the theme's `bg` — the inverse-contrast partner of
-        `fg`. Painting body text in `bg` over a saturated `accent` background
-        keeps the result readable on both light and dark themes without
-        per-theme tuning.
-
-        Returns "" for any missing palette key so callers can short-circuit
-        and skip background styling on themes that didn't expose accents.
-        """
-        from ..theme import PALETTES, DAWNFOX
-        try:
-            pal = PALETTES[self.app.theme]
-        except (KeyError, AttributeError):
-            pal = DAWNFOX
-        return (
-            pal.get("accent_alt", ""),  # endpoint bg — the distinct anchor color
-            pal.get("accent", ""),       # in-range bg — the related band color
-            pal.get("bg", ""),           # text color that stays readable on either
-        )
-
-    def _build_blob(self, visible: list):
-        """Bridge for callers that still expect a single Text blob.
-
-        Internally, the chunk is built fresh and decorated with the
-        current selection state. Mostly used by tests that snapshot the
-        Static's renderable; the live render/repaint paths go through
-        `_ChunkRender.build` + `history_render.paint` directly without
-        this helper.
-        """
-        from . import history_render
-        chunk = history_render._ChunkRender.build(visible, self._contacts)
-        marks = history_render.MarkState(
-            self._mark_start_id, self._mark_end_id, frozenset(self._in_range_ids))
-        return history_render.paint(
-            chunk, self._cursor_msg_id, marks, self._palette())
-
     def _accent_hex(self) -> str:
         """Return the active theme's accent hex, or "" if unavailable."""
         from ..theme import PALETTES, DAWNFOX
@@ -904,8 +858,6 @@ class HistoryView(VerticalScroll):
         older_widget = Static(older_decorated, classes="history-blob older")
         chunk.widget = older_widget
         older_widget._chunk_render = chunk  # type: ignore[attr-defined]
-        older_widget._chunk_messages = older_slice  # type: ignore[attr-defined]
-        older_widget._chunk_ids = set(chunk.msg_ids)  # type: ignore[attr-defined]
         if prev_top is not None and prev_top.parent is self:
             self.mount(older_widget, before=prev_top)
         else:
@@ -1271,9 +1223,9 @@ class HistoryView(VerticalScroll):
         """Update the visual range-highlight on every mounted chunk.
 
         Stores `start_id` / `end_id` and the computed in-range id set on
-        the view, then asks each chunk Static to rebuild its blob via
-        `_build_blob` (which reads those instance attrs and paints the
-        endpoint / in-range styles).
+        the view, then asks each affected chunk Static to repaint via
+        `_repaint_for_ids` (which reads those instance attrs and paints
+        the endpoint / in-range styles through `history_render.paint`).
 
         Defensive: if either marked id is missing from `messages` (e.g.
         the user switched to a chat where the previous marks don't
@@ -1302,7 +1254,7 @@ class HistoryView(VerticalScroll):
             self._in_range_ids = set()
             # Only chunks that *had* highlighted rows need a repaint;
             # everything else is already in its unhighlighted state.
-            self._rerender_chunks(old_highlighted)
+            self._repaint_for_ids(old_highlighted)
 
         if start_id is None and end_id is None:
             if not old_highlighted:
@@ -1350,15 +1302,16 @@ class HistoryView(VerticalScroll):
         # to clear it) or *now* needs to show one. Chunks outside both
         # sets are pixel-identical before and after — skipping them is
         # what makes click feedback feel instant.
-        self._rerender_chunks(old_highlighted | new_highlighted)
+        self._repaint_for_ids(old_highlighted | new_highlighted)
 
     def _repaint_for_ids(self, affected_ids: set[int] | None = None) -> None:
         """Repaint chunks whose ids intersect `affected_ids`.
 
         When `affected_ids` is None, every chunk is repainted —
         used by the cold-load path. With a set, chunks whose
-        `_chunk_ids` don't intersect are skipped (the perf invariant
-        from PR #248eaec — pinned by the repaint-only-affected test).
+        `_chunk_render.msg_ids` don't intersect are skipped (the perf
+        invariant from PR #248eaec — pinned by the repaint-only-affected
+        test).
         """
         from . import history_render
         palette = self._palette()
@@ -1374,11 +1327,6 @@ class HistoryView(VerticalScroll):
             decorated = history_render.paint(
                 chunk, self._cursor_msg_id, marks, palette)
             child.update(decorated)
-
-    # Back-compat alias so apply_marks and _move_cursor don't need to
-    # change yet. Removed in a later cleanup task.
-    def _rerender_chunks(self, affected_ids: set[int] | None = None) -> None:
-        self._repaint_for_ids(affected_ids)
 
 
 # ---------------------------------------------------------------------------
