@@ -99,11 +99,12 @@ class ImessageExportApp(App):
 
     def compose(self) -> ComposeResult:
         from textual.containers import Vertical
-        from .widgets import ActionBar, StatusLine
+        from .widgets import ActionBar, StatusLine, WindowStrip
         yield Horizontal(
             Sidebar(chats=[], contacts={}, id="sidebar"),
             Vertical(
                 ChatHeader(id="chat-header"),
+                WindowStrip(id="window-strip"),
                 HistoryView(id="history"),
                 id="history-pane",
             ),
@@ -321,6 +322,34 @@ class ImessageExportApp(App):
     # ------------------------------------------------------------------
     # Task 7: Range marks
     # ------------------------------------------------------------------
+
+    def on_window_strip_window_changed(self, event) -> None:
+        """User applied / cleared the inline date strip.
+
+        - window=None  → clear typed_window; restore the full chat.
+        - window=dict  → store as typed_window, demote any selection
+          marks (they're chat-relative, not window-relative), and
+          re-render the preview filtered to the new window.
+        """
+        from .widgets import WindowStrip
+        history = self.query_one(HistoryView)
+        if event.window is None:
+            self.state.typed_window = None
+            # Drop range marks too — they may have referenced messages
+            # outside the previous filter; keeping them in "selection"
+            # would silently re-filter the preview on next click.
+            self.state.range_start_msg_id = None
+            self.state.range_end_msg_id = None
+            self.state.window_source = "all"
+            history.filter_messages(None)
+        else:
+            self.state.typed_window = event.window
+            self.state.window_source = "typed"
+            self.state.range_start_msg_id = None
+            self.state.range_end_msg_id = None
+            history.filter_messages(event.window)
+        self.state.last_export_status = None
+        self._refresh_status()
 
     def on_history_view_range_mark_requested(self, event: HistoryView.RangeMarkRequested) -> None:
         if event.msg_id == -1:

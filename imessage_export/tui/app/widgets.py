@@ -259,6 +259,126 @@ class ChatHeader(Static):
         self.update(text)
 
 
+class WindowStrip(Horizontal):
+    """Inline date/time picker + relative-window presets pinned above
+    HistoryView.
+
+    On Apply / Clear / preset-button press it posts `WindowChanged`
+    with either a window dict (mode="range" + date/time fields) or
+    None (meaning "clear the filter, show everything"). The app
+    handler updates `state.typed_window` and re-renders the preview
+    filtered to the new window via `HistoryView.filter_messages`.
+
+    The presets (7d / 30d / Month / Year) just populate the From/To
+    fields and post the same dict shape — so the user can tweak the
+    times after picking a preset, or save out a custom range.
+    """
+
+    DEFAULT_CSS = """
+    WindowStrip {
+        height: 3;
+        padding: 0 1;
+        border-bottom: solid $accent;
+    }
+    WindowStrip Label { margin: 1 0 0 1; }
+    WindowStrip Input { width: 12; margin: 0 1; }
+    WindowStrip Button { margin: 0 0; min-width: 8; }
+    """
+
+    class WindowChanged(TextualMessage):
+        def __init__(self, window: Optional[dict]) -> None:
+            super().__init__()
+            self.window = window
+
+    def compose(self) -> ComposeResult:
+        yield Label("From")
+        yield Input(placeholder="YYYY-MM-DD", id="ws-from")
+        yield Label("To")
+        yield Input(placeholder="YYYY-MM-DD", id="ws-to")
+        yield Label("Times")
+        yield Input(placeholder="9am", id="ws-start")
+        yield Input(placeholder="5pm", id="ws-end")
+        yield Button("Apply", id="ws-apply", variant="primary")
+        yield Button("Clear", id="ws-clear")
+        yield Button("7d", id="ws-preset-7d")
+        yield Button("30d", id="ws-preset-30d")
+        yield Button("Month", id="ws-preset-month")
+        yield Button("Year", id="ws-preset-year")
+
+    def _val(self, fid: str) -> str:
+        return self.query_one(f"#{fid}", Input).value.strip()
+
+    def _set_dates(self, fd: str, td: str) -> None:
+        self.query_one("#ws-from", Input).value = fd
+        self.query_one("#ws-to", Input).value = td
+
+    def _parse_time(self, fid: str) -> Optional[str]:
+        from ...window import parse_time_12h
+        v = self._val(fid)
+        if not v:
+            return None
+        try:
+            return parse_time_12h(v)
+        except ValueError:
+            return None  # silently drop bad times; better UX than refusing
+
+    @staticmethod
+    def preset_range(preset_id: str, today: date) -> Optional[tuple[str, str]]:
+        """Map a preset button id to a (from_date, to_date) ISO pair.
+
+        Pure helper exposed for unit tests so the date math doesn't
+        require a running Textual app to verify.
+        """
+        if preset_id == "ws-preset-7d":
+            return ((today - timedelta(days=7)).isoformat(), today.isoformat())
+        if preset_id == "ws-preset-30d":
+            return ((today - timedelta(days=30)).isoformat(), today.isoformat())
+        if preset_id == "ws-preset-month":
+            return (today.replace(day=1).isoformat(), today.isoformat())
+        if preset_id == "ws-preset-year":
+            return (today.replace(month=1, day=1).isoformat(), today.isoformat())
+        return None
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        bid = event.button.id or ""
+
+        if bid == "ws-clear":
+            for fid in ("ws-from", "ws-to", "ws-start", "ws-end"):
+                self.query_one(f"#{fid}", Input).value = ""
+            self.post_message(self.WindowChanged(None))
+            return
+
+        if bid.startswith("ws-preset-"):
+            preset = self.preset_range(bid, date.today())
+            if preset is None:
+                return
+            fd, td = preset
+            self._set_dates(fd, td)
+            self.post_message(self.WindowChanged({
+                "mode": "range",
+                "from_date": fd,
+                "to_date": td,
+            }))
+            return
+
+        if bid == "ws-apply":
+            fd = self._val("ws-from")
+            td = self._val("ws-to")
+            st = self._parse_time("ws-start")
+            et = self._parse_time("ws-end")
+            if not (fd or td or st or et):
+                # Nothing typed — treat Apply as Clear so an empty form
+                # doesn't lock the user into a meaningless window.
+                self.post_message(self.WindowChanged(None))
+                return
+            window: dict = {"mode": "range", "from_date": fd, "to_date": td}
+            if st:
+                window["start_time"] = st
+            if et:
+                window["end_time"] = et
+            self.post_message(self.WindowChanged(window))
+
+
 class HistoryView(VerticalScroll):
     """Scrollable rendered chat history.
 
@@ -318,6 +438,12 @@ class HistoryView(VerticalScroll):
         # next chunk.
         self._all_messages: list = []
         self._shown_count: int = 0
+        # Original unfiltered chat — saved from the FIRST render_messages
+        # call so filter_messages(window) can restore the full list when
+        # the user clears the WindowStrip. Kept in sync with the worker
+        # output, NOT mutated by progressive load (that only shrinks the
+        # `_shown_count` window into `_all_messages`).
+        self._unfiltered_messages: list = []
         # The topmost mounted CHUNK widget (not the affordance). Each
         # successful action_load_older advances this pointer to the freshly
         # mounted older chunk so the NEXT load mounts before the new
@@ -340,6 +466,7 @@ class HistoryView(VerticalScroll):
         # chat survive (otherwise a fresh render_messages would compute
         # its hidden_count from the wrong base).
         self._all_messages = []
+        self._unfiltered_messages = []
         self._shown_count = 0
         self._topmost_widget = None
         self._load_more_widget = None
@@ -358,7 +485,7 @@ class HistoryView(VerticalScroll):
     PREVIEW_CAP = 2000        # initial window size (most-recent messages)
     LOAD_MORE_CHUNK = 2000    # how many older messages to add per "o" press
 
-    def render_messages(self, messages: list) -> None:
+    def render_messages(self, messages: list, *, _from_filter: bool = False) -> None:
         """Open the chat at its tail. Older messages stay hidden until the
         user explicitly asks for them with the "o" binding.
 
@@ -366,19 +493,14 @@ class HistoryView(VerticalScroll):
         topmost mounted chunk. Each subsequent action_load_older mounts
         the next older chunk above the current topmost.
 
-        Why explicit instead of auto-load on scroll-up: the auto-load
-        version (PRs #24/#25 + three rounds of follow-up fixes) raced
-        against Textual's layout in ways that produced MountError crashes,
-        wrong chronological order on multi-load, and a runaway-load loop
-        that left the user stuck at scroll_y=0 with every chunk mounted.
-        Explicit triggering eliminates the whole class of races by removing
-        the implicit trigger; there's no watcher to re-enter, no anchor
-        callback to race against `virtual_size`, no stale-state path.
-
-        Trade-off (carried from #22): no per-row widgets, so the
-        click-a-row-to-mark-range feature doesn't work — use the Window
-        modal for date-range selection.
+        `_from_filter=True` means the call came from `filter_messages`
+        and `messages` is already a filtered subset — we should NOT
+        overwrite `_unfiltered_messages`, so the user can clear the
+        filter and restore the full chat. Every other caller is
+        external (the chat-load worker) and that IS the new baseline.
         """
+        if not _from_filter:
+            self._unfiltered_messages = list(messages)
         self._all_messages = list(messages)
         self.remove_children()
         self._placeholder_visible = False
@@ -402,6 +524,22 @@ class HistoryView(VerticalScroll):
         # user always gets feedback).
         self._refresh_top_indicator(hidden)
         self.call_after_refresh(self.scroll_end, animate=False)
+
+    def filter_messages(self, window: Optional[dict]) -> None:
+        """Apply (or clear) the WindowStrip filter and re-render.
+
+        `window=None` restores the full chat from `_unfiltered_messages`.
+        Otherwise the helper in `state.filter_by_window` filters the
+        full list down to messages inside the window, and we re-render
+        with `_from_filter=True` so `_unfiltered_messages` survives the
+        round-trip.
+        """
+        from .state import filter_by_window
+        if window is None:
+            filtered = list(self._unfiltered_messages)
+        else:
+            filtered = filter_by_window(self._unfiltered_messages, window)
+        self.render_messages(filtered, _from_filter=True)
 
     def _refresh_top_indicator(self, remaining: int) -> None:
         """Reconcile the two top widgets with the current load state.
