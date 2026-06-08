@@ -457,6 +457,14 @@ class HistoryView(VerticalScroll):
         # older message has been loaded — gives the user a clear "you've
         # reached the start" signal instead of nothing.
         self._beginning_widget: Static | None = None
+        # Range-mark visual state. Mirrors `app.state.range_*_msg_id`
+        # for the duration of a render so `_build_blob` can paint the
+        # endpoints and in-range lines without re-querying app state
+        # for every message. Updated by `apply_marks` and consumed on
+        # every `_build_blob` call.
+        self._mark_start_id: int | None = None
+        self._mark_end_id: int | None = None
+        self._in_range_ids: set[int] = set()
 
     def show_placeholder(self, text: str = "Pick a chat from the left.") -> None:
         self.remove_children()
@@ -471,6 +479,9 @@ class HistoryView(VerticalScroll):
         self._topmost_widget = None
         self._load_more_widget = None
         self._beginning_widget = None
+        self._mark_start_id = None
+        self._mark_end_id = None
+        self._in_range_ids = set()
         # Use a class instead of an id so that calling show_placeholder
         # twice in quick succession (remove_children is async; the prior
         # widget may still be in the node tree) doesn't collide on a
@@ -517,6 +528,11 @@ class HistoryView(VerticalScroll):
         # chat-switch can still have the previous "recent-chunk" in the
         # node tree when we mount the next one. Classes coexist; ids don't.
         self._topmost_widget = Static(blob, classes="history-blob recent-chunk")
+        # Stash the slice on the widget itself so apply_marks can find
+        # all chunks (and only chunks — not the affordance / beginning
+        # marker / WindowStrip) when it needs to re-render with new
+        # highlight info.
+        self._topmost_widget._chunk_messages = visible  # type: ignore[attr-defined]
         self.mount(self._topmost_widget)
         # Mount whichever top indicator matches state: clickable affordance
         # if there are still older messages to fetch, otherwise a "reached
@@ -617,9 +633,18 @@ class HistoryView(VerticalScroll):
         `event.style.meta` when the user clicks the line, which is how
         click-to-mark-a-range survives the single-Static blob model
         (we don't have per-row widgets to attach `data_msg_id` to).
+
+        Endpoint and in-range styling is layered on top: endpoints
+        (`_mark_start_id` / `_mark_end_id`) get `reverse` so the line
+        clearly flips to foreground-on-background; in-range lines get
+        a subtle accent-tinted background so the selection extent is
+        visible at a glance.
         """
         blob = Text()
         last_date = None
+        endpoints = {self._mark_start_id, self._mark_end_id} - {None}
+        in_range = self._in_range_ids
+        accent_hex = self._accent_hex()
         for m in visible:
             ts = m.timestamp  # "YYYY-MM-DD HH:MM:SS"
             day = ts[:10]
@@ -640,11 +665,36 @@ class HistoryView(VerticalScroll):
             # `event.style.meta["msg_id"]` so on_click can mark it as a
             # range endpoint without needing per-row widgets.
             line_meta = Style(meta={"msg_id": m.message_id})
-            blob.append(f"[{ts_str}] ", style=line_meta + Style.parse("dim"))
-            blob.append(f"{speaker}: ", style=line_meta + Style.parse("bold"))
-            blob.append(body, style=line_meta)
-            blob.append("\n")
+            line = Text()
+            line.append(f"[{ts_str}] ", style=line_meta + Style.parse("dim"))
+            line.append(f"{speaker}: ", style=line_meta + Style.parse("bold"))
+            line.append(body, style=line_meta)
+            line.append("\n")
+            if m.message_id in endpoints:
+                # Strongest visual: bold + reverse-video — the user knows
+                # exactly which messages anchor the export window.
+                line.stylize("bold reverse")
+            elif m.message_id in in_range and accent_hex:
+                # Subtle: accent-tinted background so the selection's
+                # extent reads as a coherent band without overwhelming
+                # the message text. Plain `accent_hex` is too saturated
+                # for body text — we fall back to a dim style if the
+                # palette didn't expose an accent.
+                line.stylize(f"on {accent_hex}")
+                line.stylize("dim")
+            elif m.message_id in in_range:
+                line.stylize("dim italic")
+            blob.append(line)
         return blob
+
+    def _accent_hex(self) -> str:
+        """Return the active theme's accent hex, or "" if unavailable."""
+        from ..theme import PALETTES, DAWNFOX
+        try:
+            pal = PALETTES[self.app.theme]
+        except (KeyError, AttributeError):
+            pal = DAWNFOX
+        return pal.get("accent") or pal.get("accent_alt") or ""
 
     # Lines of newly-loaded chunk to peek into the viewport after a load so
     # the user can see fresh content appeared above without losing their
@@ -704,6 +754,7 @@ class HistoryView(VerticalScroll):
         # returns True synchronously after `self.mount(...)` queues, so it
         # works during the mid-mount window too.
         older_widget = Static(older_blob, classes="history-blob older")
+        older_widget._chunk_messages = older_slice  # type: ignore[attr-defined]
         if prev_top is not None and prev_top.parent is self:
             self.mount(older_widget, before=prev_top)
         else:
@@ -830,41 +881,60 @@ class HistoryView(VerticalScroll):
         self.post_message(self.RangeMarkRequested(msg_id=-1))  # sentinel: clear
 
     def apply_marks(self, start_id: int | None, end_id: int | None, messages: list[dict]) -> None:
-        """Repaint range highlight CSS classes based on current marks.
+        """Update the visual range-highlight on every mounted chunk.
 
-        `messages` is the same `selected_chat_messages` list (each {msg_id, timestamp})
-        so the in-range span is contiguous in render order.
+        Stores `start_id` / `end_id` and the computed in-range id set on
+        the view, then asks each chunk Static to rebuild its blob via
+        `_build_blob` (which reads those instance attrs and paints the
+        endpoint / in-range styles).
 
-        Defensive: if either marked id is missing from `messages` (e.g. the
-        user switched to a chat where the previous marks don't apply, and
-        the app-level cleanup didn't catch it), bail out silently rather
-        than crash on `list.index(x)`. The visual update is a no-op
-        anyway because the per-row widgets the old design targeted no
-        longer exist under the single-Static blob model — Phase 3 of
-        the redesign will rebuild this with per-line styling.
+        Defensive: if either marked id is missing from `messages` (e.g.
+        the user switched to a chat where the previous marks don't
+        apply, and the app-level cleanup didn't catch it), clear the
+        visual marks rather than crash on `list.index(x)`.
         """
         if start_id is None and end_id is None:
-            for row in self.query(".message-row"):
-                row.remove_class("is-in-range")
-                row.remove_class("is-selected-endpoint")
+            self._mark_start_id = None
+            self._mark_end_id = None
+            self._in_range_ids = set()
+            self._rerender_chunks()
             return
 
         ids_in_order = [m["message_id"] for m in messages]
-        if start_id is not None and start_id not in ids_in_order:
+        if (start_id is not None and start_id not in ids_in_order) or (
+            end_id is not None and end_id not in ids_in_order
+        ):
+            # Mark refers to a message not in the loaded list — wipe
+            # the visual state and let the caller catch up.
+            self._mark_start_id = None
+            self._mark_end_id = None
+            self._in_range_ids = set()
+            self._rerender_chunks()
             return
-        if end_id is not None and end_id not in ids_in_order:
-            return
-        endpoints = {start_id, end_id} - {None}
+
+        self._mark_start_id = start_id
+        self._mark_end_id = end_id
         if start_id and end_id:
             lo, hi = sorted([ids_in_order.index(start_id), ids_in_order.index(end_id)])
-            in_range_ids = set(ids_in_order[lo:hi+1])
+            self._in_range_ids = set(ids_in_order[lo:hi + 1])
         else:
-            in_range_ids = endpoints
+            self._in_range_ids = {start_id, end_id} - {None}
+        self._rerender_chunks()
 
-        for row in self.query(".message-row"):
-            msg_id = getattr(row, "data_msg_id", None)
-            row.set_class(msg_id in endpoints, "is-selected-endpoint")
-            row.set_class(msg_id in in_range_ids and msg_id not in endpoints, "is-in-range")
+    def _rerender_chunks(self) -> None:
+        """Rebuild every chunk Static's blob with the current mark state.
+
+        Iterates `self.children` and only touches widgets that carry a
+        `_chunk_messages` attribute — that's how we distinguish actual
+        message chunks from the WindowStrip / ChatHeader siblings, the
+        load-more affordance, and the beginning marker (none of which
+        should be repainted on mark changes).
+        """
+        for child in list(self.children):
+            slice_msgs = getattr(child, "_chunk_messages", None)
+            if slice_msgs is None:
+                continue
+            child.update(self._build_blob(slice_msgs))
 
 
 # ---------------------------------------------------------------------------

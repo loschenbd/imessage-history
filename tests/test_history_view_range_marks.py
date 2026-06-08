@@ -152,6 +152,109 @@ class TestHistoryViewRangeMarks(unittest.IsolatedAsyncioTestCase):
             marks = [m for m in posted if isinstance(m, HistoryView.RangeMarkRequested)]
             self.assertEqual(marks, [])
 
+    async def test_apply_marks_updates_in_range_set(self):
+        """apply_marks must populate `_mark_start_id`, `_mark_end_id`,
+        and `_in_range_ids` from the provided messages list. The set
+        is what `_build_blob` consults to decide which lines get the
+        in-range tint, so wiring this correctly is the load-bearing
+        bit of the Phase 3 visual highlight."""
+        from imessage_export.tui.app.widgets import HistoryView
+
+        app, HistoryView = self._build_stub_app()
+        async with app.run_test() as pilot:
+            history = app.query_one(HistoryView)
+            history.render_messages(_fake_messages(10))
+            await pilot.pause()
+
+            messages = [{"message_id": m.message_id, "timestamp": m.timestamp}
+                        for m in history._all_messages]
+            history.apply_marks(2, 6, messages)
+            await pilot.pause()
+
+            self.assertEqual(history._mark_start_id, 2)
+            self.assertEqual(history._mark_end_id, 6)
+            self.assertEqual(history._in_range_ids, {2, 3, 4, 5, 6})
+
+    async def test_apply_marks_clears_when_both_ids_none(self):
+        """apply_marks(None, None, _) is the Esc-clear path — must wipe
+        all mark state (start, end, in_range set) so a follow-up
+        re-render paints no highlights."""
+        from imessage_export.tui.app.widgets import HistoryView
+
+        app, HistoryView = self._build_stub_app()
+        async with app.run_test() as pilot:
+            history = app.query_one(HistoryView)
+            history.render_messages(_fake_messages(8))
+            await pilot.pause()
+
+            messages = [{"message_id": m.message_id, "timestamp": m.timestamp}
+                        for m in history._all_messages]
+            history.apply_marks(1, 4, messages)
+            await pilot.pause()
+            self.assertTrue(history._in_range_ids)  # populated
+
+            history.apply_marks(None, None, messages)
+            await pilot.pause()
+
+            self.assertIsNone(history._mark_start_id)
+            self.assertIsNone(history._mark_end_id)
+            self.assertEqual(history._in_range_ids, set())
+
+    async def test_apply_marks_with_stale_id_clears_visuals(self):
+        """If the marks reference an id that's NOT in the current
+        messages list (chat-switch race), apply_marks must wipe the
+        visual state instead of crashing on `list.index(stale_id)`."""
+        from imessage_export.tui.app.widgets import HistoryView
+
+        app, HistoryView = self._build_stub_app()
+        async with app.run_test() as pilot:
+            history = app.query_one(HistoryView)
+            history.render_messages(_fake_messages(5))
+            await pilot.pause()
+
+            messages = [{"message_id": m.message_id, "timestamp": m.timestamp}
+                        for m in history._all_messages]
+            # 999 is not in messages (only 0..4 are) — must not crash.
+            history.apply_marks(2, 999, messages)
+            await pilot.pause()
+
+            self.assertIsNone(history._mark_start_id)
+            self.assertIsNone(history._mark_end_id)
+            self.assertEqual(history._in_range_ids, set())
+
+    async def test_apply_marks_repaints_topmost_chunk(self):
+        """The mark visual must propagate into the actual rendered
+        Static — apply_marks should call `.update()` on every chunk
+        widget so the blob picks up the new endpoint styles. Without
+        this the user sees marks tracked in state but no visual
+        confirmation in the chat."""
+        from imessage_export.tui.app.widgets import HistoryView
+
+        app, HistoryView = self._build_stub_app()
+        async with app.run_test() as pilot:
+            history = app.query_one(HistoryView)
+            history.render_messages(_fake_messages(5))
+            await pilot.pause()
+
+            # Before marks: no spans styled with `reverse`.
+            blob_before = history._topmost_widget.renderable
+            self.assertFalse(
+                any("reverse" in str(s.style) for s in blob_before.spans),
+                "no endpoint style expected before apply_marks",
+            )
+
+            messages = [{"message_id": m.message_id, "timestamp": m.timestamp}
+                        for m in history._all_messages]
+            history.apply_marks(1, 3, messages)
+            await pilot.pause()
+
+            # After marks: spans must include `reverse` (endpoint paint).
+            blob_after = history._topmost_widget.renderable
+            self.assertTrue(
+                any("reverse" in str(s.style) for s in blob_after.spans),
+                "endpoint style MUST be present after apply_marks(1, 3)",
+            )
+
     async def test_click_on_load_more_affordance_does_not_post_range_mark(self):
         """Clicking the "Load X older messages" affordance must trigger
         a load and stop the event, NOT fall through to range-mark

@@ -529,6 +529,17 @@ class ImessageExportApp(App):
             f"Output:  {self.state.output_dir}",
             f"Redact:  {'on' if self.state.redact else 'off'}",
         ]
+        # Prepend a warning when the user is about to export the entire
+        # chat without any constraint. Gives them a chance to bail and
+        # either type a window (`W`) or click two messages to define
+        # an inline range — the two paths the redesign added — before
+        # committing to a possibly massive export.
+        if self.state.window_source == "all":
+            summary = [
+                "⚠  No window or selection set — this will export EVERY message.",
+                "   Cancel to type a window (W) or click two messages to mark a range.",
+                "",
+            ] + summary
         confirm = await self.push_screen_wait(ExportConfirmModal(summary_lines=summary))
         if not confirm:
             return
