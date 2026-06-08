@@ -391,6 +391,31 @@ class TestHistoryViewCursor(unittest.IsolatedAsyncioTestCase):
             # actually moved during the walk.
             self.assertNotEqual(history.scroll_y, start_scroll_y - 1)
 
+    async def test_single_arrow_does_not_yank_scroll_to_top(self):
+        """Regression: a single arrow press from inside the viewport
+        must not jump the scroll back to the top. The earlier impl
+        mixed screen-relative `region.y` with virtual-space `scroll_y`,
+        so any non-zero scroll caused the snap target to compute near
+        0 and every arrow press yanked the viewport to msg 0."""
+        app, HistoryView = self._build_stub_app()
+        async with app.run_test(size=(60, 24)) as pilot:
+            history = app.query_one(HistoryView)
+            history.render_messages(_fake_messages(500))
+            await pilot.pause()
+            # Cursor defaults to the latest; scroll is at the bottom.
+            start_scroll_y = history.scroll_y
+            self.assertGreater(start_scroll_y, 50,
+                               "precondition: viewport scrolled well past top")
+            # One UP — cursor moves by exactly 1; scroll should stay
+            # within a few rows of where it was, NOT snap to ~0.
+            history.action_cursor_up()
+            await pilot.pause()
+            self.assertGreater(
+                history.scroll_y, start_scroll_y - 10,
+                f"scroll yanked to top: was {start_scroll_y}, now "
+                f"{history.scroll_y}",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

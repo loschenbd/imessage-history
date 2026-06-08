@@ -1183,21 +1183,32 @@ class HistoryView(VerticalScroll):
         y_in_chunk = lines_above + chunk.day_header_prefix_count[idx]
 
         def _apply():
+            # `region.y` is SCREEN-relative (already adjusted for
+            # scroll), not virtual. `widget_y + y_in_chunk` gives the
+            # cursor row's screen-y; comparing that against virtual
+            # `scroll_y` (the prior bug) made every off-zero-scroll
+            # arrow press compute a near-zero target and yank the
+            # viewport to the top.
             try:
                 widget_y = int(chunk.widget.region.y)
             except Exception:
                 return
-            y_absolute = widget_y + y_in_chunk
-            viewport_top = int(self.scroll_y)
+            cursor_screen_y = widget_y + y_in_chunk
             viewport_h = self._viewport_height_lines()
-            viewport_bottom = viewport_top + viewport_h
-            if viewport_top + self.SCROLL_MARGIN <= y_absolute <= viewport_bottom - self.SCROLL_MARGIN:
+            if (
+                self.SCROLL_MARGIN
+                <= cursor_screen_y
+                <= viewport_h - self.SCROLL_MARGIN
+            ):
                 return  # in margin — no scroll
-            # Snap so cursor lands ~30% from the leading edge.
-            if y_absolute < viewport_top + self.SCROLL_MARGIN:
-                target = max(0, y_absolute - int(viewport_h * 0.3))
+            # Compute the screen-space delta to put the cursor at the
+            # 30% / 70% sweet spot, then translate to a virtual target
+            # by adding scroll_y.
+            if cursor_screen_y < self.SCROLL_MARGIN:
+                delta = cursor_screen_y - int(viewport_h * 0.3)
             else:
-                target = max(0, y_absolute - int(viewport_h * 0.7))
+                delta = cursor_screen_y - int(viewport_h * 0.7)
+            target = max(0, int(self.scroll_y) + delta)
             try:
                 self.scroll_to(y=target, animate=False)
             except Exception:
