@@ -132,6 +132,39 @@ class TestChunkRender(unittest.TestCase):
         chunk = history_render._ChunkRender.build(msgs, contacts={})
         self.assertEqual(chunk.msg_ids, [5, 3, 8])
 
+    def test_row_offsets_round_trip_across_day_boundary(self):
+        """Multi-day chunks insert a `\n` separator before each new
+        day-header. Those separator bytes must NOT bleed into either
+        row's slice — row_offsets must continue to bracket exactly the
+        rendered message line plus its trailing newline, with the
+        separator and the header living in the gap between rows.
+        Task 4's paint() relies on this clean bracketing to add
+        selection spans without smearing onto the day-header text."""
+        msgs = [_msg(1, ts="2026-01-01 09:00:00", text="a"),
+                _msg(2, ts="2026-01-02 09:00:00", text="b")]
+        chunk = history_render._ChunkRender.build(msgs, contacts={})
+        for m in msgs:
+            s, e = chunk.row_offsets[m.message_id]
+            slice_text = chunk.base.plain[s:e]
+            self.assertIn(f"Me: {m.text}", slice_text)
+            self.assertTrue(slice_text.endswith("\n"))
+            # The slice must NOT include the day header text — clicks
+            # on the header (which the painter never reaches) must not
+            # smear into adjacent rows' offsets.
+            self.assertNotIn("──", slice_text)
+
+    def test_build_empty_messages_returns_empty_chunk(self):
+        """Build with no messages must return an empty-but-valid
+        _ChunkRender — used by HistoryView during placeholder/loading
+        states. Must NOT raise (empty for-loop is the contract)."""
+        chunk = history_render._ChunkRender.build([], contacts={})
+        self.assertEqual(chunk.msg_ids, [])
+        self.assertEqual(chunk.row_offsets, {})
+        self.assertEqual(chunk.row_line_counts, {})
+        self.assertEqual(chunk.day_header_prefix_count, [])
+        self.assertEqual(chunk.base.plain, "")
+        self.assertIsNone(chunk.widget)
+
 
 if __name__ == "__main__":
     unittest.main()
