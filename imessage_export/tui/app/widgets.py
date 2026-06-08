@@ -512,6 +512,11 @@ class HistoryView(VerticalScroll):
         # cursored row so the user can see where their keyboard focus
         # sits. None means "no cursor" (e.g. before any chat is loaded).
         self._cursor_msg_id: int | None = None
+        # Contacts mapping forwarded to history_render.format_row. Empty
+        # by default — currently unused by the formatter (forward-compat
+        # for handle→display-name swap-in), kept so _ChunkRender.build
+        # has a stable dict reference to consume.
+        self._contacts: dict = {}
 
     def show_placeholder(self, text: str = "Pick a chat from the left.") -> None:
         self.remove_children()
@@ -580,20 +585,28 @@ class HistoryView(VerticalScroll):
         if self._cursor_msg_id not in loaded_ids:
             self._cursor_msg_id = self._all_messages[-1].message_id
 
-        blob = self._build_blob(visible)
+        from . import history_render
+
+        # Build the cached _ChunkRender for the visible slice. The
+        # base Text is unstyled — paint() layers the current cursor +
+        # selection state on the clone we hand to Static.update().
+        chunk = history_render._ChunkRender.build(visible, self._contacts)
+        palette = self._palette()
+        marks = history_render.MarkState(
+            self._mark_start_id, self._mark_end_id, frozenset(self._in_range_ids))
+        decorated = history_render.paint(chunk, self._cursor_msg_id, marks, palette)
         # Use classes (not id) — remove_children() is async, so a rapid
         # chat-switch can still have the previous "recent-chunk" in the
         # node tree when we mount the next one. Classes coexist; ids don't.
-        self._topmost_widget = Static(blob, classes="history-blob recent-chunk")
-        # Stash the slice on the widget itself so apply_marks can find
-        # all chunks (and only chunks — not the affordance / beginning
-        # marker / WindowStrip) when it needs to re-render with new
-        # highlight info.
+        self._topmost_widget = Static(decorated, classes="history-blob recent-chunk")
+        chunk.widget = self._topmost_widget
+        # Stash the full _ChunkRender on the widget so _repaint_for_ids
+        # can find it later. Old _chunk_messages / _chunk_ids attrs are
+        # kept (for now) so the existing affected-ids skip path stays
+        # wired; both are owned by the new dataclass in a later task.
+        self._topmost_widget._chunk_render = chunk  # type: ignore[attr-defined]
         self._topmost_widget._chunk_messages = visible  # type: ignore[attr-defined]
-        # Cache the chunk's message_id set so apply_marks can do an O(1)
-        # intersection test against the changed-ids set instead of walking
-        # `_chunk_messages` to rebuild the set on every click.
-        self._topmost_widget._chunk_ids = {m.message_id for m in visible}  # type: ignore[attr-defined]
+        self._topmost_widget._chunk_ids = set(chunk.msg_ids)  # type: ignore[attr-defined]
         self.mount(self._topmost_widget)
         # Mount whichever top indicator matches state: clickable affordance
         # if there are still older messages to fetch, otherwise a "reached
@@ -696,6 +709,15 @@ class HistoryView(VerticalScroll):
     _CURSOR_MARKER = "▸ "
     _GUTTER_BLANK = "  "
     _WRAP_INDENT = " " * 12
+
+    def _palette(self) -> dict:
+        """Return the active theme's palette dict (DAWNFOX/TERAFOX),
+        defaulting to DAWNFOX if the app's theme isn't one we know."""
+        from ..theme import PALETTES, DAWNFOX
+        try:
+            return PALETTES[self.app.theme]
+        except (KeyError, AttributeError):
+            return DAWNFOX
 
     def _selection_colors(self) -> tuple[str, str, str]:
         """Return (endpoint_bg, range_bg, contrast_fg) hex codes for the
@@ -856,7 +878,15 @@ class HistoryView(VerticalScroll):
             older_slice = self._all_messages[-new_shown:-prev_shown]
         else:
             older_slice = self._all_messages[-new_shown:]
-        older_blob = self._build_blob(older_slice)
+        # Build the older slice's _ChunkRender and decorate with the
+        # current cursor + mark state so any selection that spans into
+        # the older slice paints on first render.
+        from . import history_render
+        chunk = history_render._ChunkRender.build(older_slice, self._contacts)
+        marks = history_render.MarkState(
+            self._mark_start_id, self._mark_end_id, frozenset(self._in_range_ids))
+        older_decorated = history_render.paint(
+            chunk, self._cursor_msg_id, marks, self._palette())
         self._shown_count = new_shown
         remaining_hidden = len(self._all_messages) - new_shown
 
@@ -884,9 +914,11 @@ class HistoryView(VerticalScroll):
         # is the truthful "still a child of mine" check, and it also
         # returns True synchronously after `self.mount(...)` queues, so it
         # works during the mid-mount window too.
-        older_widget = Static(older_blob, classes="history-blob older")
+        older_widget = Static(older_decorated, classes="history-blob older")
+        chunk.widget = older_widget
+        older_widget._chunk_render = chunk  # type: ignore[attr-defined]
         older_widget._chunk_messages = older_slice  # type: ignore[attr-defined]
-        older_widget._chunk_ids = {m.message_id for m in older_slice}  # type: ignore[attr-defined]
+        older_widget._chunk_ids = set(chunk.msg_ids)  # type: ignore[attr-defined]
         if prev_top is not None and prev_top.parent is self:
             self.mount(older_widget, before=prev_top)
         else:
