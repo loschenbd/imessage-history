@@ -648,22 +648,39 @@ class HistoryView(VerticalScroll):
         text.append("  ⬆", style="bold")
         return text
 
-    # Selection-band visual: every line gets a 2-char gutter so the column
-    # alignment is constant. The gutter content changes by membership:
-    #   ◆  → endpoint (the two anchors of the selection)
-    #   │  → in-range (lines between the anchors)
-    #      → unselected
-    # This is the pattern text editors use to show a multi-line selection —
-    # it stays readable across themes (no row backgrounds fighting the
-    # foreground text) and gives the eye a continuous vertical bar through
-    # the selected band capped by the ◆ markers.
-    GUTTER_ENDPOINT = "◆ "
-    GUTTER_IN_RANGE = "│ "
-    GUTTER_NONE = "  "
-    # 2-char gutter shifts wrapped body lines two columns right; pad the
-    # wrap indent to match so wrapped text aligns under the message body
-    # instead of slipping back under the gutter.
-    _WRAP_INDENT = " " * 12  # 2 gutter + 10 indent (matches "[12:34 pm] ")
+    # Wrapped continuation lines indent under the message body
+    # (10 cols ≈ "[12:34 pm] "). When a row carries a selection background,
+    # those leading spaces are styled too so the colored block stays
+    # contiguous through wraps instead of breaking at column 0.
+    _WRAP_INDENT = " " * 10
+
+    def _selection_colors(self) -> tuple[str, str, str]:
+        """Return (endpoint_bg, range_bg, contrast_fg) hex codes for the
+        active theme.
+
+        Endpoint and in-range backgrounds are pulled from the palette's
+        two accent slots so they're visually related but distinct — the
+        eye can pick out the anchors from the band at a glance without
+        the colors clashing.
+
+        Foreground is the theme's `bg` — the inverse-contrast partner of
+        `fg`. Painting body text in `bg` over a saturated `accent` background
+        keeps the result readable on both light and dark themes without
+        per-theme tuning.
+
+        Returns "" for any missing palette key so callers can short-circuit
+        and skip background styling on themes that didn't expose accents.
+        """
+        from ..theme import PALETTES, DAWNFOX
+        try:
+            pal = PALETTES[self.app.theme]
+        except (KeyError, AttributeError):
+            pal = DAWNFOX
+        return (
+            pal.get("accent_alt", ""),  # endpoint bg — the distinct anchor color
+            pal.get("accent", ""),       # in-range bg — the related band color
+            pal.get("bg", ""),           # text color that stays readable on either
+        )
 
     def _build_blob(self, visible: list) -> Text:
         """Render a chunk of messages as a single Rich Text blob.
@@ -674,18 +691,22 @@ class HistoryView(VerticalScroll):
         click-to-mark-a-range survives the single-Static blob model
         (we don't have per-row widgets to attach `data_msg_id` to).
 
-        Selection highlight uses a gutter bar (see GUTTER_* class attrs).
-        Endpoints render the gutter as ◆ in bold accent, the body in
-        accent foreground; in-range lines render │ in accent so the
-        selection band reads as a continuous vertical edge. Unselected
-        lines get two padding spaces so all rows stay column-aligned.
+        Selection highlight paints the full message line:
+          - endpoints render with the `accent_alt` background (the distinct
+            anchor color) in bold, so the two range edges pop;
+          - in-range lines render with the `accent` background — the same
+            color family as the endpoints so the band reads as one
+            selection, but a different hue so endpoints stay legible
+            against it.
+        On a selected row, the per-span `dim` timestamp style is dropped —
+        dim text on a saturated background reads as washed-out. The
+        speaker stays bold because bold layers cleanly on a colored bg.
         """
         blob = Text()
         last_date = None
         endpoints = {self._mark_start_id, self._mark_end_id} - {None}
         in_range = self._in_range_ids
-        accent_hex = self._accent_hex()
-        accent_style = accent_hex or "default"
+        endpoint_bg, range_bg, contrast_fg = self._selection_colors()
         for m in visible:
             ts = m.timestamp  # "YYYY-MM-DD HH:MM:SS"
             day = ts[:10]
@@ -693,9 +714,8 @@ class HistoryView(VerticalScroll):
                 dt = datetime.strptime(day, "%Y-%m-%d")
                 if last_date is not None:
                     blob.append("\n")
-                # Day-header sits flush-left without a gutter — the bar
-                # would imply the header is itself selectable, which it
-                # isn't (clicks on it carry no msg_id meta).
+                # Day-header isn't a selectable row; render it flush-left
+                # with no row-level selection styling.
                 blob.append(
                     f"── {dt.strftime('%A, %B %-d, %Y')} ──\n",
                     style="bold cyan",
@@ -704,31 +724,25 @@ class HistoryView(VerticalScroll):
 
             is_endpoint = m.message_id in endpoints
             is_in_range = (not is_endpoint) and m.message_id in in_range
-            if is_endpoint:
-                gutter_str = self.GUTTER_ENDPOINT
-                gutter_style = f"bold {accent_style}"
-                ts_style = accent_style
-                speaker_style = f"bold {accent_style}"
-                body_style = accent_style
-            elif is_in_range:
-                gutter_str = self.GUTTER_IN_RANGE
-                gutter_style = accent_style
-                ts_style = "dim"
+            if is_endpoint and endpoint_bg and contrast_fg:
+                row_style = f"bold {contrast_fg} on {endpoint_bg}"
+                ts_style = ""        # drop dim so the timestamp reads on the bg
                 speaker_style = "bold"
-                body_style = ""
+            elif is_in_range and range_bg and contrast_fg:
+                row_style = f"{contrast_fg} on {range_bg}"
+                ts_style = ""        # ditto — dim washes out on a colored row
+                speaker_style = "bold"
             else:
-                gutter_str = self.GUTTER_NONE
-                gutter_style = ""
+                row_style = ""
                 ts_style = "dim"
                 speaker_style = "bold"
-                body_style = ""
 
             ts_str = _format_time_12h(ts)
             speaker = m.author_label or ""
             body = (m.text or "").replace("\n", "\n" + self._WRAP_INDENT)
 
             # Meta-tag every span on this line with the message id. A click
-            # anywhere along the line — gutter, timestamp, body — reports
+            # anywhere along the line — timestamp, speaker, body — reports
             # this id back via `event.style.meta["msg_id"]` so on_click
             # can mark it as a range endpoint without per-row widgets.
             line_meta = Style(meta={"msg_id": m.message_id})
@@ -737,11 +751,16 @@ class HistoryView(VerticalScroll):
                 return line_meta + Style.parse(extra) if extra else line_meta
 
             line = Text()
-            line.append(gutter_str, style=_meta_style(gutter_style))
             line.append(f"[{ts_str}] ", style=_meta_style(ts_style))
             line.append(f"{speaker}: ", style=_meta_style(speaker_style))
-            line.append(body, style=_meta_style(body_style))
+            line.append(body, style=_meta_style(""))
             line.append("\n")
+            if row_style:
+                # Apply the row-level background + foreground as the base
+                # style. Per-span styles (the `bold` speaker) layer on top
+                # without losing the background, because Rich treats bold
+                # as a modifier rather than a fg/bg override.
+                line.stylize(row_style)
             blob.append(line)
         return blob
 

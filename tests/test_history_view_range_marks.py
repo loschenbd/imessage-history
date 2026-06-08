@@ -225,15 +225,15 @@ class TestHistoryViewRangeMarks(unittest.IsolatedAsyncioTestCase):
     async def test_apply_marks_repaints_topmost_chunk(self):
         """The mark visual must propagate into the actual rendered
         Static — apply_marks should call `.update()` on every chunk
-        widget so the blob picks up the new gutter markers. Without
+        widget so the blob picks up the new row backgrounds. Without
         this the user sees marks tracked in state but no visual
         confirmation in the chat.
 
-        The visual scheme is a 2-char gutter at the start of each
-        message line: `◆ ` for endpoints, `│ ` for in-range, `  `
-        for unselected. Asserting on the plain text is stronger
-        than asserting on style strings — it survives theme changes
-        and Rich/Textual style-rendering tweaks.
+        The visual scheme paints the full row: endpoints get the
+        `accent_alt` background, in-range get the `accent` background,
+        both with the theme's `bg` as the foreground for contrast.
+        We assert on the presence of "on <hex>" in the line-level
+        styles — the load-bearing observable user-facing change.
         """
         from imessage_export.tui.app.widgets import HistoryView
 
@@ -243,28 +243,36 @@ class TestHistoryViewRangeMarks(unittest.IsolatedAsyncioTestCase):
             history.render_messages(_fake_messages(5))
             await pilot.pause()
 
-            # Before marks: gutter is all blank — neither marker present.
-            text_before = history._topmost_widget.renderable.plain
-            self.assertNotIn("◆", text_before,
-                             "endpoint marker must not render before apply_marks")
-            self.assertNotIn("│", text_before,
-                             "in-range marker must not render before apply_marks")
+            endpoint_bg, range_bg, _ = history._selection_colors()
+            self.assertTrue(endpoint_bg and range_bg,
+                            "test theme must expose accent + accent_alt — "
+                            "otherwise the background-highlight contract is moot")
+
+            # Before marks: no span carries either selection background.
+            blob_before = history._topmost_widget.renderable
+            self.assertFalse(
+                any(endpoint_bg in str(s.style) or range_bg in str(s.style)
+                    for s in blob_before.spans),
+                "no selection backgrounds expected before apply_marks",
+            )
 
             messages = [{"message_id": m.message_id, "timestamp": m.timestamp}
                         for m in history._all_messages]
             history.apply_marks(1, 3, messages)
             await pilot.pause()
 
-            # After marks(1, 3): two endpoints (1 and 3) and one in-range
-            # (2). The blob's plain text must show both markers.
-            text_after = history._topmost_widget.renderable.plain
-            self.assertEqual(
-                text_after.count("◆"), 2,
-                "exactly two endpoint markers expected after apply_marks(1, 3)",
+            # After marks(1, 3): the rendered blob's style spans must
+            # include BOTH the endpoint background (msgs 1 and 3) and
+            # the in-range background (msg 2).
+            blob_after = history._topmost_widget.renderable
+            style_strs = [str(s.style) for s in blob_after.spans]
+            self.assertTrue(
+                any(endpoint_bg in s for s in style_strs),
+                f"endpoint background ({endpoint_bg}) MUST appear after apply_marks(1, 3)",
             )
-            self.assertEqual(
-                text_after.count("│"), 1,
-                "exactly one in-range marker expected for the single line between 1 and 3",
+            self.assertTrue(
+                any(range_bg in s for s in style_strs),
+                f"in-range background ({range_bg}) MUST appear after apply_marks(1, 3)",
             )
 
     async def test_click_on_load_more_affordance_does_not_post_range_mark(self):
