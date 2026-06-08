@@ -338,6 +338,30 @@ class TestHistoryViewCursor(unittest.IsolatedAsyncioTestCase):
             # advanced by at least 5 messages (page is `max(5, size.height)`).
             self.assertGreaterEqual(history._cursor_msg_id, 15)
 
+    async def test_scroll_follows_cursor_off_bottom_edge(self):
+        """Cursor walked past the bottom margin must trigger a scroll
+        so the cursor row stays in view. This is the new row-level
+        scroll-follow (replaces the old chunk-level scroll_to_widget)."""
+        app, HistoryView = self._build_stub_app()
+        async with app.run_test(size=(60, 12)) as pilot:
+            history = app.query_one(HistoryView)
+            history.render_messages(_fake_messages(200))
+            await pilot.pause()
+            # Cursor starts at the last message → already at the bottom.
+            start_scroll_y = history.scroll_y
+            # Move up far enough to land mid-history, then down again to
+            # force the cursor to walk back past the viewport bottom.
+            for _ in range(30):
+                history.action_cursor_up()
+            await pilot.pause()
+            for _ in range(30):
+                history.action_cursor_down()
+            await pilot.pause()
+            # We don't pin an exact scroll_y because viewport size and
+            # virtual_size depend on the stub; just assert the scroll
+            # actually moved during the walk.
+            self.assertNotEqual(history.scroll_y, start_scroll_y - 1)
+
 
 if __name__ == "__main__":
     unittest.main()

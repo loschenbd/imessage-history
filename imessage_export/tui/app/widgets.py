@@ -1149,29 +1149,63 @@ class HistoryView(VerticalScroll):
         self._repaint_for_ids({old_id, new_id} | old_highlighted)
         self._scroll_cursor_into_view()
 
-    def _scroll_cursor_into_view(self) -> None:
-        """Best-effort: scroll the chunk holding the cursor into view.
+    SCROLL_MARGIN = 2  # rows of breathing room at the viewport edges
 
-        Single-Static-per-chunk means we can't address an individual
-        message line as a widget — we don't know its y inside the
-        rendered Text without re-measuring layout. Scrolling the
-        containing chunk into view is a coarse approximation, but it
-        keeps the cursor reachable within a chunk and triggers an
-        actual scroll when the cursor walks past a chunk boundary.
-        Fails silently if Textual can't honor the scroll request (e.g.
-        the chunk isn't mounted yet during a fast nav burst).
-        """
+    def _scroll_cursor_into_view(self) -> None:
+        """Row-level scroll-follow: keep the cursor row at least
+        SCROLL_MARGIN rows from each viewport edge. When out of range,
+        snap so the cursor lands ~30% from the leading edge."""
         cursor = self._cursor_msg_id
         if cursor is None:
             return
-        for child in self.children:
-            chunk_ids = getattr(child, "_chunk_ids", None)
-            if chunk_ids and cursor in chunk_ids:
-                try:
-                    self.scroll_to_widget(child, animate=False)
-                except Exception:
-                    pass
+        chunk = self._find_chunk_for_id(cursor)
+        if chunk is None or chunk.widget is None:
+            return
+
+        # Cursor's y inside the chunk = day-headers above + cumulative
+        # rendered-line count of all messages above it within the chunk.
+        try:
+            idx = chunk.msg_ids.index(cursor)
+        except ValueError:
+            return
+        lines_above = sum(
+            chunk.row_line_counts[mid] for mid in chunk.msg_ids[:idx]
+        )
+        y_in_chunk = lines_above + chunk.day_header_prefix_count[idx]
+
+        def _apply():
+            try:
+                widget_y = int(chunk.widget.region.y)
+            except Exception:
                 return
+            y_absolute = widget_y + y_in_chunk
+            viewport_top = int(self.scroll_y)
+            viewport_h = self._viewport_height_lines()
+            viewport_bottom = viewport_top + viewport_h
+            if viewport_top + self.SCROLL_MARGIN <= y_absolute <= viewport_bottom - self.SCROLL_MARGIN:
+                return  # in margin — no scroll
+            # Snap so cursor lands ~30% from the leading edge.
+            if y_absolute < viewport_top + self.SCROLL_MARGIN:
+                target = max(0, y_absolute - int(viewport_h * 0.3))
+            else:
+                target = max(0, y_absolute - int(viewport_h * 0.7))
+            try:
+                self.scroll_to(y=target, animate=False)
+            except Exception:
+                pass
+
+        # Wrap in call_after_refresh so a fresh mount has time to
+        # settle its region.y before we read it (mirrors the §5c
+        # anchor-after-load pattern).
+        self.call_after_refresh(_apply)
+
+    def _find_chunk_for_id(self, msg_id: int):
+        """Return the _ChunkRender holding `msg_id`, or None."""
+        for child in self.children:
+            chunk = getattr(child, "_chunk_render", None)
+            if chunk is not None and msg_id in chunk.row_offsets:
+                return chunk
+        return None
 
     def action_clear_marks(self) -> None:
         self.post_message(self.RangeMarkRequested(msg_id=-1))  # sentinel: clear
