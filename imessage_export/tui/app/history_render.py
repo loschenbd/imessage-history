@@ -185,3 +185,83 @@ def selection_colors(palette: dict) -> SelectionColors:
         cursor_bar_on_in_range=accent_alt,
         contrast_fg=palette.get("bg", ""),
     )
+
+
+@dataclass(slots=True, frozen=True)
+class MarkState:
+    """The three pieces of selection state HistoryView passes to paint.
+
+    Frozen + hashable so HistoryView (or anyone else) can short-circuit
+    paint calls when state didn't change since the last paint.
+    """
+    anchor_id: int | None
+    active_id: int | None
+    in_range_ids: frozenset[int]
+
+
+_EMPTY_MARKS = MarkState(None, None, frozenset())
+
+
+def paint(
+    chunk: _ChunkRender,
+    cursor_id: int | None,
+    marks: MarkState,
+    palette: dict,
+) -> Text:
+    """Clone the chunk's cached base and overlay cursor + selection spans.
+
+    The cached `base` is never mutated — every paint returns a clone.
+    Span additions are layered on top so Rich's effective-style
+    composition picks up the bg/fg overlays without disturbing the
+    per-segment `meta`, `dim`, or `bold` modifiers already baked in.
+
+    Endpoint vs in-range vs cursor priority on overlapping rows:
+      - selection bg (endpoint or in-range) always wins for the row's
+        background;
+      - cursor tint (B) is suppressed on a selection row;
+      - cursor bar (D) flips color so it stays visible against the
+        underlying selection bg.
+    """
+    out = chunk.base.copy()
+    colors = selection_colors(palette)
+    endpoints = {marks.anchor_id, marks.active_id} - {None}
+
+    for msg_id in chunk.msg_ids:
+        start, end = chunk.row_offsets[msg_id]
+        is_endpoint = msg_id in endpoints
+        is_in_range = (not is_endpoint) and msg_id in marks.in_range_ids
+        is_cursor = msg_id == cursor_id
+
+        # Layer 1 — row-level selection background.
+        if is_endpoint and colors.endpoint_bg and colors.contrast_fg:
+            out.stylize(
+                _parse_style(f"{colors.contrast_fg} on {colors.endpoint_bg}"),
+                start, end,
+            )
+        elif is_in_range and colors.range_bg and colors.contrast_fg:
+            out.stylize(
+                _parse_style(f"{colors.contrast_fg} on {colors.range_bg}"),
+                start, end,
+            )
+
+        # Layer 2 — cursor row tint (B), suppressed on selection rows.
+        if is_cursor and not (is_endpoint or is_in_range):
+            if colors.cursor_tint_bg:
+                out.stylize(
+                    _parse_style(f"on {colors.cursor_tint_bg}"),
+                    start, end,
+                )
+
+        # Layer 3 — cursor bar (D), on the leading 2 cols regardless of
+        # whether this row also carries a selection bg.
+        if is_cursor:
+            if is_endpoint:
+                bar_color = colors.cursor_bar_on_endpoint
+            elif is_in_range:
+                bar_color = colors.cursor_bar_on_in_range
+            else:
+                bar_color = colors.cursor_bar_default
+            if bar_color:
+                out.stylize(_parse_style(f"on {bar_color}"), start, start + 2)
+
+    return out
