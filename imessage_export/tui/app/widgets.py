@@ -505,6 +505,13 @@ class HistoryView(VerticalScroll):
         self._mark_start_id: int | None = None
         self._mark_end_id: int | None = None
         self._in_range_ids: set[int] = set()
+        # Keyboard cursor. Independent of the mark endpoints — the user
+        # moves the cursor row-by-row with up/down arrows, and then
+        # presses space/enter to drop a range endpoint at the cursor
+        # position. _build_blob paints a `▸ ` gutter marker on the
+        # cursored row so the user can see where their keyboard focus
+        # sits. None means "no cursor" (e.g. before any chat is loaded).
+        self._cursor_msg_id: int | None = None
 
     def show_placeholder(self, text: str = "Pick a chat from the left.") -> None:
         self.remove_children()
@@ -522,6 +529,7 @@ class HistoryView(VerticalScroll):
         self._mark_start_id = None
         self._mark_end_id = None
         self._in_range_ids = set()
+        self._cursor_msg_id = None
         # Use a class instead of an id so that calling show_placeholder
         # twice in quick succession (remove_children is async; the prior
         # widget may still be in the node tree) doesn't collide on a
@@ -562,6 +570,15 @@ class HistoryView(VerticalScroll):
         self._shown_count = min(self.PREVIEW_CAP, len(self._all_messages))
         visible = self._all_messages[-self._shown_count:]
         hidden = len(self._all_messages) - self._shown_count
+
+        # Seed the keyboard cursor on the most-recent message — that's
+        # where the user is reading from, so up-arrow walks backward
+        # through history in the direction they're scanning. Preserve
+        # a still-valid cursor across re-renders (e.g. filter toggles)
+        # so the user doesn't lose their place.
+        loaded_ids = {m.message_id for m in self._all_messages}
+        if self._cursor_msg_id not in loaded_ids:
+            self._cursor_msg_id = self._all_messages[-1].message_id
 
         blob = self._build_blob(visible)
         # Use classes (not id) — remove_children() is async, so a rapid
@@ -669,11 +686,16 @@ class HistoryView(VerticalScroll):
         text.append("  ⬆", style="bold")
         return text
 
-    # Wrapped continuation lines indent under the message body
-    # (10 cols ≈ "[12:34 pm] "). When a row carries a selection background,
-    # those leading spaces are styled too so the colored block stays
-    # contiguous through wraps instead of breaking at column 0.
-    _WRAP_INDENT = " " * 10
+    # Every row carries a 2-col gutter — `▸ ` for the keyboard cursor,
+    # two spaces otherwise — so all rows stay column-aligned and the
+    # cursor marker doesn't shift the timestamp/body left and right as
+    # the user navigates. Wrapped continuation lines indent under the
+    # message body (2 gutter + 10 cols ≈ "[12:34 pm] "). On a row with
+    # a selection background, the leading 12 cols of the wrap still
+    # carry the row style so the colored block stays contiguous.
+    _CURSOR_MARKER = "▸ "
+    _GUTTER_BLANK = "  "
+    _WRAP_INDENT = " " * 12
 
     def _selection_colors(self) -> tuple[str, str, str]:
         """Return (endpoint_bg, range_bg, contrast_fg) hex codes for the
@@ -727,6 +749,7 @@ class HistoryView(VerticalScroll):
         last_date = None
         endpoints = {self._mark_start_id, self._mark_end_id} - {None}
         in_range = self._in_range_ids
+        cursor_id = self._cursor_msg_id
         endpoint_bg, range_bg, contrast_fg = self._selection_colors()
         for m in visible:
             ts = m.timestamp  # "YYYY-MM-DD HH:MM:SS"
@@ -762,10 +785,17 @@ class HistoryView(VerticalScroll):
             speaker = m.author_label or ""
             body = (m.text or "").replace("\n", "\n" + self._WRAP_INDENT)
 
+            is_cursor = m.message_id == cursor_id
+            gutter_str = self._CURSOR_MARKER if is_cursor else self._GUTTER_BLANK
+            # `bold` so the marker pops without needing a fg color —
+            # on selected rows it inherits `contrast_fg` from row_style.
+            gutter_style = "bold" if is_cursor else ""
+
             # Meta-tag every span on this line with the message id. A click
-            # anywhere along the line — timestamp, speaker, body — reports
-            # this id back via `event.style.meta["msg_id"]` so on_click
-            # can mark it as a range endpoint without per-row widgets.
+            # anywhere along the line — gutter, timestamp, speaker, body —
+            # reports this id back via `event.style.meta["msg_id"]` so
+            # on_click can mark it as a range endpoint without per-row
+            # widgets.
             line_meta = Style(meta={"msg_id": m.message_id})
 
             def _meta_style(extra: str) -> Style:
@@ -774,6 +804,7 @@ class HistoryView(VerticalScroll):
                 return line_meta + _parse_style(extra)
 
             line = Text()
+            line.append(gutter_str, style=_meta_style(gutter_style))
             line.append(f"[{ts_str}] ", style=_meta_style(ts_style))
             line.append(f"{speaker}: ", style=_meta_style(speaker_style))
             line.append(body, style=_meta_style(""))
@@ -922,6 +953,8 @@ class HistoryView(VerticalScroll):
             self.msg_id = msg_id
 
     BINDINGS = [
+        ("up", "cursor_up", "Previous message"),
+        ("down", "cursor_down", "Next message"),
         ("enter", "mark_row", "Mark range endpoint"),
         ("space", "mark_row", "Mark range endpoint"),
         ("escape", "clear_marks", "Clear marks"),
@@ -973,10 +1006,81 @@ class HistoryView(VerticalScroll):
             self.post_message(self.RangeMarkRequested(msg_id))
 
     def action_mark_row(self) -> None:
-        focused = self.app.focused
-        msg_id = getattr(focused, "data_msg_id", None)
-        if msg_id is not None:
-            self.post_message(self.RangeMarkRequested(msg_id))
+        """Drop a range endpoint at the keyboard cursor's current row.
+
+        Posts the same RangeMarkRequested message a mouse click would,
+        so the app-level mark logic (nearest-endpoint adjustment, range
+        computation, repaint) doesn't need to know whether the request
+        came from a click or a key. Silent no-op when no cursor is set
+        (e.g. empty chat).
+        """
+        if self._cursor_msg_id is not None:
+            self.post_message(self.RangeMarkRequested(self._cursor_msg_id))
+
+    def action_cursor_up(self) -> None:
+        self._move_cursor(-1)
+
+    def action_cursor_down(self) -> None:
+        self._move_cursor(+1)
+
+    def _move_cursor(self, delta: int) -> None:
+        """Advance the keyboard cursor by `delta` messages and repaint.
+
+        Clamps to the loaded-message bounds (no wrap) — the user always
+        knows where the ends are. Repaints only the chunk(s) holding the
+        old and new cursor rows so the response stays fast even on long
+        chats. After moving, asks the parent VerticalScroll to bring the
+        cursor's chunk into view if it scrolled off-screen.
+        """
+        if not self._all_messages or self._cursor_msg_id is None:
+            return
+        ids = [m.message_id for m in self._all_messages]
+        try:
+            i = ids.index(self._cursor_msg_id)
+        except ValueError:
+            # Cursor refers to an id no longer in the loaded list
+            # (chat-switch race). Reset to the latest message instead
+            # of crashing — same recovery pattern apply_marks uses.
+            self._cursor_msg_id = self._all_messages[-1].message_id
+            self._rerender_chunks({self._cursor_msg_id})
+            self._scroll_cursor_into_view()
+            return
+        new_i = max(0, min(len(ids) - 1, i + delta))
+        if new_i == i:
+            return  # already at a bound; nothing to repaint
+        old_id = self._cursor_msg_id
+        new_id = ids[new_i]
+        self._cursor_msg_id = new_id
+        # Only the two rows that changed need a repaint — old loses its
+        # marker, new gains one. _rerender_chunks intersects this against
+        # each chunk's `_chunk_ids`, so chunks that contain neither are
+        # skipped (the perf invariant from the previous commit).
+        self._rerender_chunks({old_id, new_id})
+        self._scroll_cursor_into_view()
+
+    def _scroll_cursor_into_view(self) -> None:
+        """Best-effort: scroll the chunk holding the cursor into view.
+
+        Single-Static-per-chunk means we can't address an individual
+        message line as a widget — we don't know its y inside the
+        rendered Text without re-measuring layout. Scrolling the
+        containing chunk into view is a coarse approximation, but it
+        keeps the cursor reachable within a chunk and triggers an
+        actual scroll when the cursor walks past a chunk boundary.
+        Fails silently if Textual can't honor the scroll request (e.g.
+        the chunk isn't mounted yet during a fast nav burst).
+        """
+        cursor = self._cursor_msg_id
+        if cursor is None:
+            return
+        for child in self.children:
+            chunk_ids = getattr(child, "_chunk_ids", None)
+            if chunk_ids and cursor in chunk_ids:
+                try:
+                    self.scroll_to_widget(child, animate=False)
+                except Exception:
+                    pass
+                return
 
     def action_clear_marks(self) -> None:
         self.post_message(self.RangeMarkRequested(msg_id=-1))  # sentinel: clear
