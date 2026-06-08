@@ -309,6 +309,18 @@ class TestChatHeader(unittest.IsolatedAsyncioTestCase):
                 # message-count summary) has to be visible.
                 self.assertTrue(rendered.strip(), "header should not be empty")
                 self.assertIn("messages", rendered)
+                # Layout sanity: the header's DEFAULT_CSS sets height: 1
+                # but App.CSS also applies `border-bottom: solid $panel`,
+                # which adds a row. Without `height: 2` in App.CSS, the
+                # widget would lay out at height 0 (border consumes the
+                # only row, content is squeezed out). Pin the actual
+                # rendered size here so a regression makes the header
+                # invisible to the user gets caught immediately.
+                self.assertGreater(
+                    header.size.height, 0,
+                    "ChatHeader must take at least one row in the layout — "
+                    "otherwise the chat title/count/last-message text is invisible",
+                )
 
     async def test_header_empty_when_no_selection(self):
         tmpdir = tempfile.TemporaryDirectory()

@@ -49,7 +49,7 @@ class ImessageExportApp(App):
     Sidebar > .selected { background: $panel; color: $primary; text-style: bold; }
     Sidebar.region-active { border-right: thick $accent; }
 
-    ChatHeader { background: $surface; border-bottom: solid $panel; }
+    ChatHeader { background: $surface; border-bottom: solid $panel; height: 2; }
 
     HistoryView { background: $background; color: $foreground; }
     HistoryView.region-active { border-left: thick $accent; }
