@@ -288,7 +288,14 @@ class TestHistoryViewCursor(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(history._mark_active_id, 7)
             self.assertEqual(history._in_range_ids, {4, 5, 6, 7})
 
-    async def test_plain_arrow_clears_anchor(self):
+    async def test_plain_arrow_ends_extension_but_keeps_committed_marks(self):
+        """A plain Up/Down after a shift+arrow extension ends the
+        extension (anchor/active go None) but the COMMITTED marks
+        (start/end/in_range) survive — they're what the user sees as
+        the selection background. The shift-extension mirror in
+        `_extend_selection` promotes anchor/active into the committed
+        pair as it grows, so stopping at the end of an extension is the
+        natural "commit this selection" action."""
         app, HistoryView = self._build_stub_app()
         async with app.run_test() as pilot:
             history = app.query_one(HistoryView)
@@ -297,12 +304,47 @@ class TestHistoryViewCursor(unittest.IsolatedAsyncioTestCase):
             history._cursor_msg_id = 4
             history.action_extend_down()
             await pilot.pause()
-            # Anchor is 4, active is 5; now plain Down should clear.
+            # Anchor=4, active=5, range={4,5}, start=4, end=5 mirrored.
             history.action_cursor_down()
             await pilot.pause()
             self.assertIsNone(history._mark_anchor_id)
             self.assertIsNone(history._mark_active_id)
-            self.assertEqual(history._in_range_ids, set())
+            # Committed marks must persist — this is the contract.
+            self.assertEqual(history._in_range_ids, {4, 5})
+            self.assertEqual(history._mark_start_id, 4)
+            self.assertEqual(history._mark_end_id, 5)
+
+    async def test_arrow_navigation_preserves_click_marks(self):
+        """Marks set by click / space / enter (committed via
+        apply_marks, not shift+arrow) must survive arrow navigation.
+        Regression: an earlier symmetric-clear in `_move_cursor` was
+        wiping every mark on every plain arrow press, making the
+        selection vanish the moment the user moved the cursor."""
+        app, HistoryView = self._build_stub_app()
+        async with app.run_test() as pilot:
+            history = app.query_one(HistoryView)
+            history.render_messages(_fake_messages(10))
+            await pilot.pause()
+            # Simulate the click-mark flow: apply_marks commits a range
+            # without ever touching anchor/active.
+            messages = [{"message_id": m.message_id, "timestamp": m.timestamp}
+                        for m in history._all_messages]
+            history.apply_marks(3, 6, messages)
+            await pilot.pause()
+            self.assertEqual(history._in_range_ids, {3, 4, 5, 6})
+            history._cursor_msg_id = 8
+            # Walk the cursor around — committed marks must stay put.
+            history.action_cursor_up()
+            await pilot.pause()
+            history.action_cursor_up()
+            await pilot.pause()
+            history.action_cursor_to_start()
+            await pilot.pause()
+            history.action_page_down()
+            await pilot.pause()
+            self.assertEqual(history._in_range_ids, {3, 4, 5, 6})
+            self.assertEqual(history._mark_start_id, 3)
+            self.assertEqual(history._mark_end_id, 6)
 
     async def test_action_cursor_to_end_parks_on_latest(self):
         app, HistoryView = self._build_stub_app()

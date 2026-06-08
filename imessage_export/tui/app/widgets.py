@@ -1037,28 +1037,20 @@ class HistoryView(VerticalScroll):
         if self._cursor_msg_id == target_id:
             return
         old_id = self._cursor_msg_id
-        # Capture any old highlight state before clearing it, so the
-        # painter has a precise set to repaint as cleared. Mirrors the
-        # symmetric clear in `_move_cursor` so Home/End don't leave a
-        # stale highlighted range from a prior shift+arrow extension.
-        old_highlighted: set[int] = set(self._in_range_ids)
+        # Home/End end an in-progress shift+arrow extension but leave
+        # any COMMITTED marks alone — matches `_move_cursor`'s behavior
+        # for plain arrows. Esc is the explicit clear path.
+        old_extension: set[int] = set()
         if self._mark_anchor_id is not None:
-            old_highlighted.add(self._mark_anchor_id)
+            old_extension.add(self._mark_anchor_id)
         if self._mark_active_id is not None:
-            old_highlighted.add(self._mark_active_id)
-        if self._mark_start_id is not None:
-            old_highlighted.add(self._mark_start_id)
-        if self._mark_end_id is not None:
-            old_highlighted.add(self._mark_end_id)
+            old_extension.add(self._mark_active_id)
 
         self._cursor_msg_id = target_id
         self._mark_anchor_id = None
         self._mark_active_id = None
-        self._mark_start_id = None
-        self._mark_end_id = None
-        self._in_range_ids = set()
 
-        affected = {target_id} | old_highlighted
+        affected = {target_id} | old_extension
         if old_id is not None:
             affected.add(old_id)
         self._repaint_for_ids(affected)
@@ -1141,21 +1133,24 @@ class HistoryView(VerticalScroll):
             return
         old_id = self._cursor_msg_id
         new_id = self._all_messages[new_i].message_id
-        # Capture the OLD shift+arrow range (if any) so the painter has
-        # a precise set to clear when a plain Up/Down collapses it.
-        old_highlighted: set[int] = set(self._in_range_ids)
+        # Plain arrow ends an in-progress shift+arrow extension by
+        # clearing the anchor/active state, but the COMMITTED marks
+        # (`_mark_start_id` / `_mark_end_id` / `_in_range_ids`) persist
+        # — those are the user-visible selection backgrounds the user
+        # set via click / space / enter (or by stopping at the end of a
+        # shift+arrow extension, where the mirror in `_extend_selection`
+        # promotes anchor/active into the committed pair). The painter
+        # needs the old anchor/active in the repaint set so any
+        # extension-only background fades cleanly.
+        old_extension: set[int] = set()
         if self._mark_anchor_id is not None:
-            old_highlighted.add(self._mark_anchor_id)
+            old_extension.add(self._mark_anchor_id)
         if self._mark_active_id is not None:
-            old_highlighted.add(self._mark_active_id)
+            old_extension.add(self._mark_active_id)
         self._cursor_msg_id = new_id
-        # Clear any in-progress shift+arrow extension on a plain Up/Down.
         self._mark_anchor_id = None
         self._mark_active_id = None
-        self._mark_start_id = None
-        self._mark_end_id = None
-        self._in_range_ids = set()
-        self._repaint_for_ids({old_id, new_id} | old_highlighted)
+        self._repaint_for_ids({old_id, new_id} | old_extension)
         self._scroll_cursor_into_view()
 
     SCROLL_MARGIN = 2  # rows of breathing room at the viewport edges
