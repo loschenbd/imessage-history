@@ -166,5 +166,36 @@ class TestChunkRender(unittest.TestCase):
         self.assertIsNone(chunk.widget)
 
 
+class TestSelectionColors(unittest.TestCase):
+
+    def test_dawnfox_palette(self):
+        from imessage_export.tui.theme import DAWNFOX
+        c = history_render.selection_colors(DAWNFOX)
+        self.assertEqual(c.endpoint_bg, DAWNFOX["accent_alt"])
+        self.assertEqual(c.range_bg, DAWNFOX["accent"])
+        self.assertEqual(c.cursor_tint_bg, DAWNFOX["bg_alt"])
+        # Cursor bar's default color is accent_alt; when on an endpoint
+        # row (already accent_alt bg), the painter flips it to accent.
+        self.assertEqual(c.cursor_bar_default, DAWNFOX["accent_alt"])
+        self.assertEqual(c.cursor_bar_on_endpoint, DAWNFOX["accent"])
+        self.assertEqual(c.cursor_bar_on_in_range, DAWNFOX["accent_alt"])
+        self.assertEqual(c.contrast_fg, DAWNFOX["bg"])
+
+    def test_terafox_palette(self):
+        from imessage_export.tui.theme import TERAFOX
+        c = history_render.selection_colors(TERAFOX)
+        self.assertEqual(c.endpoint_bg, TERAFOX["accent_alt"])
+        self.assertEqual(c.range_bg, TERAFOX["accent"])
+        self.assertEqual(c.cursor_tint_bg, TERAFOX["bg_alt"])
+        self.assertEqual(c.contrast_fg, TERAFOX["bg"])
+
+    def test_missing_keys_return_empty_strings(self):
+        sparse = {"accent": "#000000"}  # only one of the keys present
+        c = history_render.selection_colors(sparse)
+        self.assertEqual(c.range_bg, "#000000")
+        self.assertEqual(c.endpoint_bg, "")
+        self.assertEqual(c.contrast_fg, "")
+
+
 if __name__ == "__main__":
     unittest.main()
