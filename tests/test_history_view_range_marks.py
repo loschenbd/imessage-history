@@ -323,6 +323,36 @@ class TestHistoryViewRangeMarks(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(marks, [],
                              "affordance click must not be mistaken for a range mark")
 
+    async def test_on_click_with_stale_meta_msg_id_is_silently_dropped(self):
+        """If the click's style.meta refers to a msg_id no longer in
+        _id_to_index (chat-switch race / mid-prune click), on_click
+        must NOT post RangeMarkRequested — silent drop is the contract."""
+        from imessage_export.tui.app.widgets import HistoryView
+
+        app, HistoryView = self._build_stub_app()
+        async with app.run_test() as pilot:
+            history = app.query_one(HistoryView)
+            history.render_messages(_fake_messages(5))
+            await pilot.pause()
+
+            class _FakeStyle:
+                meta = {"msg_id": 99999}  # not in the loaded set
+
+            class _FakeEvent:
+                widget = history._topmost_widget
+                style = _FakeStyle()
+                def stop(self): pass
+
+            posted = []
+            original_post = history.post_message
+            history.post_message = lambda m: posted.append(m) or original_post(m)
+
+            history.on_click(_FakeEvent())
+            await pilot.pause()
+
+            marks = [m for m in posted if isinstance(m, HistoryView.RangeMarkRequested)]
+            self.assertEqual(marks, [], "stale meta must not post RangeMarkRequested")
+
     async def test_apply_marks_skips_chunks_outside_selection(self):
         """apply_marks must NOT repaint chunks whose ids don't intersect
         the old-or-new selection. This is the load-bearing optimization

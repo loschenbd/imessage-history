@@ -1020,6 +1020,13 @@ class HistoryView(VerticalScroll):
             meta = getattr(style, "meta", None) or {}
             msg_id = meta.get("msg_id")
             if msg_id is not None:
+                # Drop clicks whose msg_id was filtered out / unloaded
+                # mid-prune. The post-handler can't recover from a stale
+                # id cleanly, and silently dropping matches the cursor
+                # stale-id recovery pattern.
+                if int(msg_id) not in self._id_to_index:
+                    event.stop()
+                    return
                 self.post_message(self.RangeMarkRequested(int(msg_id)))
                 event.stop()
                 return
