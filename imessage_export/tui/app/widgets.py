@@ -167,6 +167,19 @@ class Sidebar(Vertical):
                 event.stop()
                 return
 
+        if focused is list_view and event.key == "right":
+            # Right arrow on the chat list jumps into the history pane.
+            # Pairs with HistoryView's Left handler so the two panes feel
+            # like a single bidirectional spatial nav.
+            try:
+                history = self.app.query_one(HistoryView)
+            except Exception:
+                return
+            history.focus()
+            event.prevent_default()
+            event.stop()
+            return
+
         if focused is filter_input and event.key == "down":
             list_view.focus()
             event.prevent_default()
@@ -624,6 +637,24 @@ class HistoryView(VerticalScroll):
         ("escape", "clear_marks", "Clear marks"),
         ("o", "load_older", "Load 2,000 older messages"),
     ]
+
+    def on_key(self, event) -> None:
+        """Left arrow jumps back to the sidebar chat list.
+
+        Pairs with Sidebar's Right handler so ←/→ feel like a single
+        spatial bridge between the two main panes. HistoryView doesn't
+        scroll horizontally, so consuming Left here doesn't break any
+        real interaction.
+        """
+        if event.key == "left":
+            try:
+                sidebar = self.app.query_one(Sidebar)
+                list_view = sidebar.query_one("#sidebar-list", ListView)
+            except Exception:
+                return
+            list_view.focus()
+            event.prevent_default()
+            event.stop()
 
     def on_click(self, event) -> None:
         target = event.widget

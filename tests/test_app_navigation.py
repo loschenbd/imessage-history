@@ -164,6 +164,45 @@ class TestSidebarTypeToFilter(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 self.assertEqual(app.focused, lv)
 
+    async def test_right_from_list_focuses_history(self):
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        with _patched_app(tmpdir.name):
+            from imessage_export.tui.app.app import ImessageExportApp
+            from imessage_export.tui.app.widgets import HistoryView, Sidebar
+            from textual.widgets import ListView
+
+            app = ImessageExportApp()
+            async with app.run_test() as pilot:
+                await _boot_and_select_first_chat(pilot, app)
+                sidebar = app.query_one(Sidebar)
+                lv = sidebar.query_one(ListView)
+                lv.focus()
+                await pilot.pause()
+                await pilot.press("right")
+                await pilot.pause()
+                self.assertIs(app.focused, app.query_one(HistoryView))
+
+    async def test_left_from_history_focuses_list(self):
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        with _patched_app(tmpdir.name):
+            from imessage_export.tui.app.app import ImessageExportApp
+            from imessage_export.tui.app.widgets import HistoryView, Sidebar
+            from textual.widgets import ListView
+
+            app = ImessageExportApp()
+            async with app.run_test() as pilot:
+                await _boot_and_select_first_chat(pilot, app)
+                history = app.query_one(HistoryView)
+                history.focus()
+                await pilot.pause()
+                await pilot.press("left")
+                await pilot.pause()
+                sidebar = app.query_one(Sidebar)
+                lv = sidebar.query_one(ListView)
+                self.assertIs(app.focused, lv)
+
     async def test_esc_in_filter_clears_and_refocuses_list(self):
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)

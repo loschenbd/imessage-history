@@ -373,6 +373,7 @@ class HelpModal(ModalScreen[None]):
             yield Static(
                 "Navigation\n"
                 "  Tab / Shift+Tab       Cycle focus: Sidebar → History → Actions\n"
+                "  ← →                    Jump between sidebar and history\n"
                 "  ↑ ↓                    Move within the focused region\n"
                 "  Home / End            Jump to top / bottom\n"
                 "  PageUp / PageDown     Page within the focused region\n"
