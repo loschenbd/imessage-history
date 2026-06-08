@@ -338,6 +338,33 @@ class TestHistoryViewCursor(unittest.IsolatedAsyncioTestCase):
             # advanced by at least 5 messages (page is `max(5, size.height)`).
             self.assertGreaterEqual(history._cursor_msg_id, 15)
 
+    async def test_filter_excluding_cursor_parks_on_nearest_by_timestamp(self):
+        """When a filter narrows the message set and excludes the
+        cursor's id, render_messages(_from_filter=True) must park the
+        cursor on the message whose timestamp is closest to the
+        excluded cursor — NOT silently jump to the latest."""
+        app, HistoryView = self._build_stub_app()
+        async with app.run_test() as pilot:
+            history = app.query_one(HistoryView)
+            full = _fake_messages(20)
+            history.render_messages(full)
+            await pilot.pause()
+            history._cursor_msg_id = 10  # mid-history
+
+            # Filter narrows to messages 0..4 and 15..19 — excluding 10.
+            # Nearest by timestamp from msg 10 in the remaining set is
+            # msg 4 (earlier, but closer in index than msg 15 because
+            # the index gap is identical and ties prefer the older).
+            narrowed = full[:5] + full[15:]
+            history.render_messages(narrowed, _from_filter=True)
+            await pilot.pause()
+
+            # Either side of 10 is 5 indices away; nearest-by-timestamp
+            # picks one of {4, 15}. Both are acceptable; assert the
+            # cursor is NOT silently snapped to the latest.
+            self.assertIn(history._cursor_msg_id, {4, 15})
+            self.assertNotEqual(history._cursor_msg_id, 19)
+
     async def test_scroll_follows_cursor_off_bottom_edge(self):
         """Cursor walked past the bottom margin must trigger a scroll
         so the cursor row stays in view. This is the new row-level

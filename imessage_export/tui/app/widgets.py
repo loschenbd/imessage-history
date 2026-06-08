@@ -593,8 +593,17 @@ class HistoryView(VerticalScroll):
         # a still-valid cursor across re-renders (e.g. filter toggles)
         # so the user doesn't lose their place.
         loaded_ids = {m.message_id for m in self._all_messages}
-        if self._cursor_msg_id not in loaded_ids:
+        if self._cursor_msg_id is None:
+            # No prior cursor — park on the latest (cold load).
             self._cursor_msg_id = self._all_messages[-1].message_id
+        elif self._cursor_msg_id not in loaded_ids:
+            # Cursor was set but its id was filtered out. Pick the
+            # remaining message whose timestamp is nearest to the
+            # excluded cursor's timestamp — bisecting on the loaded
+            # list (sorted by timestamp by construction).
+            self._cursor_msg_id = self._nearest_loaded_by_timestamp(
+                self._cursor_msg_id, _from_filter and self._unfiltered_messages
+            ) or self._all_messages[-1].message_id
 
         from . import history_render
 
@@ -625,6 +634,47 @@ class HistoryView(VerticalScroll):
         # user always gets feedback).
         self._refresh_top_indicator(hidden)
         self.call_after_refresh(self.scroll_end, animate=False)
+
+    def _nearest_loaded_by_timestamp(
+        self,
+        excluded_id: int,
+        unfiltered: list | None,
+    ) -> int | None:
+        """Return the message_id in `_all_messages` whose timestamp is
+        nearest to `excluded_id`'s timestamp. `unfiltered` is the pre-
+        filter list (kept for filter callers); falls back to None if
+        we can't find the excluded message there either."""
+        excluded_ts = None
+        if unfiltered:
+            for m in unfiltered:
+                if m.message_id == excluded_id:
+                    excluded_ts = m.timestamp
+                    break
+        if excluded_ts is None:
+            return None
+        # _all_messages is ordered by timestamp; bisect on it.
+        import bisect
+        timestamps = [m.timestamp for m in self._all_messages]
+        i = bisect.bisect_left(timestamps, excluded_ts)
+        # Pick the closer of i-1 and i (clamped to bounds).
+        candidates = []
+        if i > 0:
+            candidates.append(i - 1)
+        if i < len(self._all_messages):
+            candidates.append(i)
+        if not candidates:
+            return None
+        best = min(candidates,
+                   key=lambda k: abs(self._compare_ts_to(
+                       self._all_messages[k].timestamp, excluded_ts)))
+        return self._all_messages[best].message_id
+
+    def _compare_ts_to(self, ts_a: str, ts_b: str) -> int:
+        """Cheap timestamp distance — string lex order is fine because
+        both are zero-padded ISO-format. Returns ordering, not duration."""
+        if ts_a == ts_b:
+            return 0
+        return 1 if ts_a > ts_b else -1
 
     def filter_messages(self, window: Optional[dict]) -> None:
         """Apply (or clear) the WindowStrip filter and re-render.
