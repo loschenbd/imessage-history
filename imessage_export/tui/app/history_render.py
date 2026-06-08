@@ -84,3 +84,70 @@ def format_row(message, contacts: dict) -> tuple[list[tuple[str, Style]], int]:
         ],
         line_count,
     )
+
+
+@dataclass(slots=True)
+class _ChunkRender:
+    """One mounted chunk's cached render state.
+
+    `widget` is filled in by HistoryView after mount — `build` returns
+    the dataclass with `widget=None` and the caller stitches it on.
+    Everything else is fully precomputed so paint() never needs to
+    re-walk the messages.
+    """
+    msg_ids: list[int]
+    base: Text                                  # unstyled blob — build-once
+    row_offsets: dict[int, tuple[int, int]]     # (start, end) byte offsets in base.plain
+    row_line_counts: dict[int, int]              # rendered line count per msg_id
+    day_header_prefix_count: list[int]           # day-header lines before msg_ids[i]
+    widget: object | None = None                 # Static; injected after mount
+
+    @classmethod
+    def build(cls, messages: Iterable, contacts: dict) -> "_ChunkRender":
+        """Run format_row over every message in one pass and assemble
+        the unstyled blob + offset/line-count/day-header tables.
+
+        Day-header rows are emitted at the top and at every calendar
+        boundary, styled `bold cyan` (same as the legacy _build_blob).
+        They contribute to the base text but not to `row_offsets` —
+        clicks on a header line carry no msg_id meta, which matches
+        today's behavior.
+        """
+        msgs = list(messages)
+        base = Text()
+        msg_ids: list[int] = []
+        row_offsets: dict[int, tuple[int, int]] = {}
+        row_line_counts: dict[int, int] = {}
+        day_header_prefix_count: list[int] = []
+
+        last_date: str | None = None
+        headers_so_far = 0
+        for m in msgs:
+            day = m.timestamp[:10]
+            if day != last_date:
+                if last_date is not None:
+                    base.append("\n")
+                dt = datetime.strptime(day, "%Y-%m-%d")
+                base.append(
+                    f"── {dt.strftime('%A, %B %-d, %Y')} ──\n",
+                    style=_parse_style("bold cyan"),
+                )
+                headers_so_far += 1
+                last_date = day
+            day_header_prefix_count.append(headers_so_far)
+            row_start = len(base.plain)
+            segments, line_count = format_row(m, contacts)
+            for text, style in segments:
+                base.append(text, style=style)
+            row_end = len(base.plain)
+            row_offsets[m.message_id] = (row_start, row_end)
+            row_line_counts[m.message_id] = line_count
+            msg_ids.append(m.message_id)
+
+        return cls(
+            msg_ids=msg_ids,
+            base=base,
+            row_offsets=row_offsets,
+            row_line_counts=row_line_counts,
+            day_header_prefix_count=day_header_prefix_count,
+        )

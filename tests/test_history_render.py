@@ -79,5 +79,59 @@ class TestFormatRow(unittest.TestCase):
             self.assertEqual(style.meta.get("msg_id"), 7)
 
 
+class TestChunkRender(unittest.TestCase):
+
+    def test_build_assembles_base_text_from_format_row(self):
+        msgs = [_msg(1, text="hi"), _msg(2, text="there")]
+        chunk = history_render._ChunkRender.build(msgs, contacts={})
+        # The unstyled base Text holds the concatenation of all rows
+        # plus exactly one day header at the top.
+        plain = chunk.base.plain
+        self.assertIn("── Thursday, January 1, 2026 ──\n", plain)
+        self.assertIn("[9:00 AM] Me: hi\n", plain)
+        self.assertIn("[9:00 AM] Me: there\n", plain)
+
+    def test_row_offsets_slice_back_to_each_rows_text(self):
+        msgs = [_msg(1, text="hi"), _msg(2, text="there")]
+        chunk = history_render._ChunkRender.build(msgs, contacts={})
+        for m in msgs:
+            start, end = chunk.row_offsets[m.message_id]
+            slice_text = chunk.base.plain[start:end]
+            # Each row's slice contains its gutter, ts, speaker, body,
+            # and trailing newline — exactly what format_row produced.
+            self.assertTrue(slice_text.startswith("  "))   # gutter
+            self.assertIn(f"Me: {m.text}", slice_text)
+            self.assertTrue(slice_text.endswith("\n"))
+
+    def test_row_line_counts_match_body_wraps(self):
+        msgs = [_msg(1, text="single"), _msg(2, text="two\nlines"),
+                _msg(3, text="three\nfour\nfive")]
+        chunk = history_render._ChunkRender.build(msgs, contacts={})
+        self.assertEqual(chunk.row_line_counts[1], 1)
+        self.assertEqual(chunk.row_line_counts[2], 2)
+        self.assertEqual(chunk.row_line_counts[3], 3)
+
+    def test_day_header_prefix_count_advances_at_boundary(self):
+        # Two messages same day, then one on a new day.
+        msgs = [
+            _msg(1, ts="2026-01-01 09:00:00"),
+            _msg(2, ts="2026-01-01 10:00:00"),
+            _msg(3, ts="2026-01-02 09:00:00"),
+        ]
+        chunk = history_render._ChunkRender.build(msgs, contacts={})
+        # `day_header_prefix_count[i]` is the count of day-header lines
+        # rendered ABOVE msg_ids[i] in the blob (i.e. the cumulative
+        # header count at the time msg_ids[i] is emitted). For msg 1:
+        # the day-1 header sits above it → 1. For msg 2: still under
+        # the same day-1 header → 1. For msg 3: both day-1 and day-2
+        # headers sit above it → 2.
+        self.assertEqual(chunk.day_header_prefix_count, [1, 1, 2])
+
+    def test_msg_ids_preserved_in_order(self):
+        msgs = [_msg(5), _msg(3), _msg(8)]
+        chunk = history_render._ChunkRender.build(msgs, contacts={})
+        self.assertEqual(chunk.msg_ids, [5, 3, 8])
+
+
 if __name__ == "__main__":
     unittest.main()
