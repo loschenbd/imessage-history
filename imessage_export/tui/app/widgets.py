@@ -16,6 +16,23 @@ from textual.widget import Widget
 from textual.widgets import Button, Input, ListItem, ListView, Label, Static
 
 
+# Per-run cache for Style.parse — called 3× per message line in
+# `_build_blob`, so for a 2000-message chunk that's 6000 parses per
+# repaint. Parsed Style objects are immutable and safe to share across
+# every blob and every chunk; the cache trims that to ~5 parses total
+# (one per distinct style string we use).
+_STYLE_CACHE: dict[str, Style] = {}
+
+
+def _parse_style(spec: str) -> Style:
+    """Return a memoized `Style.parse(spec)` (empty Style for empty spec)."""
+    cached = _STYLE_CACHE.get(spec)
+    if cached is None:
+        cached = Style.parse(spec) if spec else Style()
+        _STYLE_CACHE[spec] = cached
+    return cached
+
+
 def _format_time_12h(ts: str) -> str:
     """Convert "YYYY-MM-DD HH:MM:SS" (or "HH:MM:SS") to Messages-style "h:mm AM/PM"."""
     hh = ts[11:13] if len(ts) >= 19 else ts[:2]
@@ -556,6 +573,10 @@ class HistoryView(VerticalScroll):
         # marker / WindowStrip) when it needs to re-render with new
         # highlight info.
         self._topmost_widget._chunk_messages = visible  # type: ignore[attr-defined]
+        # Cache the chunk's message_id set so apply_marks can do an O(1)
+        # intersection test against the changed-ids set instead of walking
+        # `_chunk_messages` to rebuild the set on every click.
+        self._topmost_widget._chunk_ids = {m.message_id for m in visible}  # type: ignore[attr-defined]
         self.mount(self._topmost_widget)
         # Mount whichever top indicator matches state: clickable affordance
         # if there are still older messages to fetch, otherwise a "reached
@@ -748,7 +769,9 @@ class HistoryView(VerticalScroll):
             line_meta = Style(meta={"msg_id": m.message_id})
 
             def _meta_style(extra: str) -> Style:
-                return line_meta + Style.parse(extra) if extra else line_meta
+                # Module-level `_parse_style` memoizes the parse; per-line
+                # `+ line_meta` is cheap (just a dict merge for the meta).
+                return line_meta + _parse_style(extra)
 
             line = Text()
             line.append(f"[{ts_str}] ", style=_meta_style(ts_style))
@@ -832,6 +855,7 @@ class HistoryView(VerticalScroll):
         # works during the mid-mount window too.
         older_widget = Static(older_blob, classes="history-blob older")
         older_widget._chunk_messages = older_slice  # type: ignore[attr-defined]
+        older_widget._chunk_ids = {m.message_id for m in older_slice}  # type: ignore[attr-defined]
         if prev_top is not None and prev_top.parent is self:
             self.mount(older_widget, before=prev_top)
         else:
@@ -969,48 +993,101 @@ class HistoryView(VerticalScroll):
         the user switched to a chat where the previous marks don't
         apply, and the app-level cleanup didn't catch it), clear the
         visual marks rather than crash on `list.index(x)`.
+
+        Performance: builds an id→index dict (O(N) once, O(1) per
+        lookup) instead of repeated `list.index()` scans, and only
+        repaints chunks whose ids intersect either the old or new
+        highlight set. For a long chat with several chunks loaded,
+        that turns "rebuild every chunk on every click" into "rebuild
+        the one chunk you clicked in" — the click-to-mark feedback
+        loop drops from sluggish to instant.
         """
-        if start_id is None and end_id is None:
+        # Snapshot the OLD highlight set so we can repaint any chunks
+        # whose rows need to *un*-highlight after the marks change.
+        old_highlighted: set[int] = set(self._in_range_ids)
+        if self._mark_start_id is not None:
+            old_highlighted.add(self._mark_start_id)
+        if self._mark_end_id is not None:
+            old_highlighted.add(self._mark_end_id)
+
+        def _commit_clear() -> None:
             self._mark_start_id = None
             self._mark_end_id = None
             self._in_range_ids = set()
-            self._rerender_chunks()
+            # Only chunks that *had* highlighted rows need a repaint;
+            # everything else is already in its unhighlighted state.
+            self._rerender_chunks(old_highlighted)
+
+        if start_id is None and end_id is None:
+            if not old_highlighted:
+                return  # nothing was highlighted; nothing to repaint
+            _commit_clear()
             return
 
-        ids_in_order = [m["message_id"] for m in messages]
-        if (start_id is not None and start_id not in ids_in_order) or (
-            end_id is not None and end_id not in ids_in_order
+        # O(N) one-shot build, O(1) lookups — replaces two O(N)
+        # `ids_in_order.index(...)` calls.
+        id_to_index = {m["message_id"]: i for i, m in enumerate(messages)}
+        if (start_id is not None and start_id not in id_to_index) or (
+            end_id is not None and end_id not in id_to_index
         ):
             # Mark refers to a message not in the loaded list — wipe
             # the visual state and let the caller catch up.
-            self._mark_start_id = None
-            self._mark_end_id = None
-            self._in_range_ids = set()
-            self._rerender_chunks()
+            _commit_clear()
+            return
+
+        new_highlighted: set[int]
+        if start_id is not None and end_id is not None:
+            lo = id_to_index[start_id]
+            hi = id_to_index[end_id]
+            if lo > hi:
+                lo, hi = hi, lo
+            new_in_range = {messages[i]["message_id"] for i in range(lo, hi + 1)}
+            new_highlighted = new_in_range
+        else:
+            new_in_range = {start_id, end_id} - {None}
+            new_highlighted = set(new_in_range)
+
+        # Bail early when nothing changed — repeated clicks on the same
+        # endpoint, or an idempotent app-level callback, should not
+        # re-render thousands of message lines.
+        if (
+            self._mark_start_id == start_id
+            and self._mark_end_id == end_id
+            and self._in_range_ids == new_in_range
+        ):
             return
 
         self._mark_start_id = start_id
         self._mark_end_id = end_id
-        if start_id and end_id:
-            lo, hi = sorted([ids_in_order.index(start_id), ids_in_order.index(end_id)])
-            self._in_range_ids = set(ids_in_order[lo:hi + 1])
-        else:
-            self._in_range_ids = {start_id, end_id} - {None}
-        self._rerender_chunks()
+        self._in_range_ids = new_in_range
+        # Repaint any chunk that either *was* showing a highlight (needs
+        # to clear it) or *now* needs to show one. Chunks outside both
+        # sets are pixel-identical before and after — skipping them is
+        # what makes click feedback feel instant.
+        self._rerender_chunks(old_highlighted | new_highlighted)
 
-    def _rerender_chunks(self) -> None:
-        """Rebuild every chunk Static's blob with the current mark state.
+    def _rerender_chunks(self, affected_ids: set[int] | None = None) -> None:
+        """Rebuild chunk Statics whose ids intersect `affected_ids`.
 
         Iterates `self.children` and only touches widgets that carry a
         `_chunk_messages` attribute — that's how we distinguish actual
         message chunks from the WindowStrip / ChatHeader siblings, the
         load-more affordance, and the beginning marker (none of which
         should be repainted on mark changes).
+
+        When `affected_ids` is None, every chunk is rebuilt — the
+        original full-redraw behavior, kept for callers (and tests)
+        that don't have a precise "what changed" set. When it's a set,
+        chunks whose `_chunk_ids` don't intersect it are skipped.
         """
         for child in list(self.children):
             slice_msgs = getattr(child, "_chunk_messages", None)
             if slice_msgs is None:
                 continue
+            if affected_ids is not None:
+                chunk_ids = getattr(child, "_chunk_ids", None)
+                if chunk_ids is not None and not (chunk_ids & affected_ids):
+                    continue
             child.update(self._build_blob(slice_msgs))
 
 

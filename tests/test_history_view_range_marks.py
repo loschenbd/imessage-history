@@ -310,6 +310,58 @@ class TestHistoryViewRangeMarks(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(marks, [],
                              "affordance click must not be mistaken for a range mark")
 
+    async def test_apply_marks_skips_chunks_outside_selection(self):
+        """apply_marks must NOT repaint chunks whose ids don't intersect
+        the old-or-new selection. This is the load-bearing optimization
+        that keeps click feedback snappy on long chats — without it,
+        every click rebuilds every mounted chunk's blob (which got
+        flagged as sluggish in real use).
+
+        Build a 2-chunk history, mark a range inside chunk B, and
+        verify that chunk A's Static was NOT updated.
+        """
+        from imessage_export.tui.app.widgets import HistoryView
+
+        app, HistoryView = self._build_stub_app()
+        async with app.run_test() as pilot:
+            history = app.query_one(HistoryView)
+            # Load enough messages to force a second (older) chunk on
+            # action_load_older so we have two chunks to observe.
+            history.render_messages(_fake_messages(HistoryView.PREVIEW_CAP * 2))
+            await pilot.pause()
+            history.action_load_older()
+            await pilot.pause()
+
+            # Identify the two chunk Statics (those with _chunk_ids).
+            chunks = [c for c in history.children if getattr(c, "_chunk_ids", None)]
+            self.assertGreaterEqual(len(chunks), 2,
+                                    "test needs ≥2 chunks to verify the skip")
+            chunk_a, chunk_b = chunks[0], chunks[-1]
+
+            # Pick an id that lives ONLY in chunk_b — anchors the range
+            # inside that chunk, leaving chunk_a outside the selection.
+            target_id = next(iter(chunk_b._chunk_ids))
+            self.assertNotIn(target_id, chunk_a._chunk_ids,
+                             "pre-condition: target lives in chunk_b only")
+
+            # Spy on .update() calls per chunk.
+            updates: dict[int, int] = {id(chunk_a): 0, id(chunk_b): 0}
+            orig_a_update, orig_b_update = chunk_a.update, chunk_b.update
+            chunk_a.update = lambda r: (updates.update({id(chunk_a): updates[id(chunk_a)] + 1}), orig_a_update(r))[1]
+            chunk_b.update = lambda r: (updates.update({id(chunk_b): updates[id(chunk_b)] + 1}), orig_b_update(r))[1]
+
+            messages = [{"message_id": m.message_id, "timestamp": m.timestamp}
+                        for m in history._all_messages]
+            # Single-endpoint mark inside chunk_b only.
+            history.apply_marks(target_id, target_id, messages)
+            await pilot.pause()
+
+            self.assertEqual(updates[id(chunk_b)], 1,
+                             "chunk_b contains the mark; must be repainted exactly once")
+            self.assertEqual(updates[id(chunk_a)], 0,
+                             "chunk_a has no marked ids; must NOT be repainted "
+                             "(this is the perceived-sluggishness fix)")
+
 
 if __name__ == "__main__":
     unittest.main()
