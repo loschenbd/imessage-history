@@ -4,43 +4,14 @@ HistoryView, StatusLine, ActionBar are filled in by Tasks 6 / 7 / 13.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
-from typing import Iterable, Optional
+from datetime import date, timedelta
+from typing import Optional
 
-from rich.style import Style
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message as TextualMessage
-from textual.widget import Widget
 from textual.widgets import Button, Input, ListItem, ListView, Label, Static
-
-
-# Per-run cache for Style.parse — called 3× per message line during a
-# chunk repaint, so for a 2000-message chunk that's 6000 parses per
-# repaint. Parsed Style objects are immutable and safe to share across
-# every blob and every chunk; the cache trims that to ~5 parses total
-# (one per distinct style string we use).
-_STYLE_CACHE: dict[str, Style] = {}
-
-
-def _parse_style(spec: str) -> Style:
-    """Return a memoized `Style.parse(spec)` (empty Style for empty spec)."""
-    cached = _STYLE_CACHE.get(spec)
-    if cached is None:
-        cached = Style.parse(spec) if spec else Style()
-        _STYLE_CACHE[spec] = cached
-    return cached
-
-
-def _format_time_12h(ts: str) -> str:
-    """Convert "YYYY-MM-DD HH:MM:SS" (or "HH:MM:SS") to Messages-style "h:mm AM/PM"."""
-    hh = ts[11:13] if len(ts) >= 19 else ts[:2]
-    mm = ts[14:16] if len(ts) >= 19 else ts[3:5]
-    h = int(hh)
-    period = "AM" if h < 12 else "PM"
-    h12 = h % 12 or 12
-    return f"{h12}:{mm} {period}"
 
 
 class Sidebar(Vertical):
@@ -422,28 +393,19 @@ class WindowStrip(Horizontal):
 class HistoryView(VerticalScroll):
     """Scrollable rendered chat history.
 
-    Renders messages with the same day-header convention used by the
-    Markdown writer: `── Saturday, June 6, 2026 ──` before the first
-    message of each calendar day. Speaker headers are bold.
+    Day boundaries render as a full-width rule (`──── Saturday, June 6,
+    2026 ────`) at chunk-render width. Within a day, consecutive
+    messages from the same speaker (no internal ≥30-min gap) collapse
+    under a single `Speaker  ·  9:00 AM` header; continuation lines
+    carry inline padded times. All speaker/footnote/selection styling
+    is baked into the Rich Text at build time using palette hex from
+    `theme.PALETTES` — so this widget has no `.speaker-*`/`.day-header`
+    CSS classes to wire up.
     """
 
     DEFAULT_CSS = """
     HistoryView {
         padding: 0 2;
-    }
-    HistoryView > .day-header {
-        color: $accent;
-        text-style: bold;
-        padding: 1 0 0 0;
-    }
-    HistoryView > .message-row {
-        padding: 0;
-    }
-    HistoryView > .message-row.is-selected-endpoint {
-        background: $accent 30%;
-    }
-    HistoryView > .message-row.is-in-range {
-        background: $accent 15%;
     }
     HistoryView > .history-placeholder {
         padding: 2 0;
@@ -578,10 +540,23 @@ class HistoryView(VerticalScroll):
             self._unfiltered_messages = list(messages)
         self._all_messages = list(messages)
         self._id_to_index = {m.message_id: i for i, m in enumerate(self._all_messages)}
+        # A pending shift+arrow extension from a prior chat would point
+        # `_mark_anchor_id` / `_mark_active_id` at message ids that don't
+        # exist in this chat — the first shift+arrow press would then
+        # crash on `_id_to_index[stale_anchor]`. Reset both. Clicked
+        # marks are cleared at the app level via `selected_chat_id`
+        # change, so we don't touch _mark_start_id / _mark_end_id here.
+        self._mark_anchor_id = None
+        self._mark_active_id = None
         self.remove_children()
         self._placeholder_visible = False
         if not self._all_messages:
-            self.show_placeholder("No messages in this chat.")
+            # Filtered to nothing vs an actually-empty chat read
+            # different to the user; pick the message accordingly.
+            self.show_placeholder(
+                "No messages match this filter."
+                if _from_filter else "No messages in this chat."
+            )
             return
 
         self._shown_count = min(self.PREVIEW_CAP, len(self._all_messages))
@@ -611,8 +586,13 @@ class HistoryView(VerticalScroll):
         # Build the cached _ChunkRender for the visible slice. The
         # base Text is unstyled — paint() layers the current cursor +
         # selection state on the clone we hand to Static.update().
-        chunk = history_render._ChunkRender.build(visible, self._contacts)
+        # `width` makes row_line_counts wrap-aware so the cursor's
+        # screen-y math doesn't drift on long-message chats.
         palette = self._palette()
+        chunk = history_render._ChunkRender.build(
+            visible, self._contacts,
+            palette=palette, width=self._render_width(),
+        )
         marks = history_render.MarkState(
             self._mark_start_id, self._mark_end_id, frozenset(self._in_range_ids))
         decorated = history_render.paint(chunk, self._cursor_msg_id, marks, palette)
@@ -758,17 +738,6 @@ class HistoryView(VerticalScroll):
         text.append("  ⬆", style="bold")
         return text
 
-    # Every row carries a 2-col gutter — `▸ ` for the keyboard cursor,
-    # two spaces otherwise — so all rows stay column-aligned and the
-    # cursor marker doesn't shift the timestamp/body left and right as
-    # the user navigates. Wrapped continuation lines indent under the
-    # message body (2 gutter + 10 cols ≈ "[12:34 pm] "). On a row with
-    # a selection background, the leading 12 cols of the wrap still
-    # carry the row style so the colored block stays contiguous.
-    _CURSOR_MARKER = "▸ "
-    _GUTTER_BLANK = "  "
-    _WRAP_INDENT = " " * 12
-
     def _palette(self) -> dict:
         """Return the active theme's palette dict (DAWNFOX/TERAFOX),
         defaulting to DAWNFOX if the app's theme isn't one we know."""
@@ -777,6 +746,20 @@ class HistoryView(VerticalScroll):
             return PALETTES[self.app.theme]
         except (KeyError, AttributeError):
             return DAWNFOX
+
+    def _render_width(self) -> int:
+        """The width chunk Statics actually render at — used by
+        `_ChunkRender.build` so per-row line counts include word-wrap.
+
+        Empirically this is `size.width - 2` for our padding/scrollbar
+        layout (verified against `chunk.virtual_region.width` in
+        manual repro). Returns a positive int even before first
+        layout — a 1-cell fallback keeps `build` from crashing while
+        downstream scroll math harmlessly disagrees by a few cells
+        until the next render after we have a real width.
+        """
+        w = self.size.width - 2
+        return w if w > 0 else 80
 
     def _accent_hex(self) -> str:
         """Return the active theme's accent hex, or "" if unavailable."""
@@ -820,11 +803,15 @@ class HistoryView(VerticalScroll):
         # current cursor + mark state so any selection that spans into
         # the older slice paints on first render.
         from . import history_render
-        chunk = history_render._ChunkRender.build(older_slice, self._contacts)
+        palette = self._palette()
+        chunk = history_render._ChunkRender.build(
+            older_slice, self._contacts,
+            palette=palette, width=self._render_width(),
+        )
         marks = history_render.MarkState(
             self._mark_start_id, self._mark_end_id, frozenset(self._in_range_ids))
         older_decorated = history_render.paint(
-            chunk, self._cursor_msg_id, marks, self._palette())
+            chunk, self._cursor_msg_id, marks, palette)
         self._shown_count = new_shown
         # _id_to_index is already complete (every loaded message lives
         # in _all_messages from chat-load time — load-older only widens
@@ -884,35 +871,6 @@ class HistoryView(VerticalScroll):
 
         self.call_after_refresh(_preserve_position_with_peek)
 
-    def _format_row(self, m) -> Text:
-        ts = _format_time_12h(m.timestamp)
-        speaker = m.author_label or ""
-        body = (m.text or "").replace("\n", "\n          ")
-        # Resolve theme palette to literal hex codes at render time. Rich's
-        # style parser doesn't understand Textual's `$var` markup and
-        # silently drops unknown style names — so we can't put `$muted` /
-        # `$primary` directly in the style strings. Pull hex from the
-        # active palette instead. The day-header / range-highlight Static
-        # widgets still get their colors from App.CSS (theme variables),
-        # because Textual interpolates `$var` at CSS parse time.
-        from ..theme import PALETTES, DAWNFOX  # cheap; cached by Python import system
-        # Fallback is static (no subprocess) so rendering never blocks on
-        # `defaults read` even if theme registration regressed.
-        try:
-            pal = PALETTES[self.app.theme]
-        except (KeyError, AttributeError):
-            pal = DAWNFOX  # safe static fallback; never shells out
-        is_me = bool(m.is_from_me)
-        # `$primary` is bound to `accent` and `$accent` is bound to
-        # `accent_alt` (see register_textual_themes), so use the same
-        # mapping here for "me" vs "other".
-        speaker_color = pal["accent_alt"] if is_me else pal["accent"]
-        text = Text()
-        text.append(f"[{ts}] ", style=pal["muted"])
-        text.append(f"{speaker}: ", style=f"bold {speaker_color}")
-        text.append(body)
-        return text
-
     # ------------------------------------------------------------------
     # Task 7: Range marks
     # ------------------------------------------------------------------
@@ -922,6 +880,20 @@ class HistoryView(VerticalScroll):
         def __init__(self, msg_id: int) -> None:
             super().__init__()
             self.msg_id = msg_id
+
+    class SelectionExtended(TextualMessage):
+        """User extended the keyboard selection (shift+arrow).
+
+        Carries the full (start_id, end_id) span so the app can drop it
+        straight into `state.range_*_msg_id` and `window_source =
+        "selection"`. Without this, shift+arrow updates the visual
+        highlight but never tells AppState — Export then ignores the
+        selection and dumps the whole chat.
+        """
+        def __init__(self, start_id: int, end_id: int) -> None:
+            super().__init__()
+            self.start_id = start_id
+            self.end_id = end_id
 
     BINDINGS = [
         ("up", "cursor_up", "Previous message"),
@@ -976,18 +948,24 @@ class HistoryView(VerticalScroll):
                 # mid-prune. The post-handler can't recover from a stale
                 # id cleanly, and silently dropping matches the cursor
                 # stale-id recovery pattern.
-                if int(msg_id) not in self._id_to_index:
+                msg_id = int(msg_id)
+                if msg_id not in self._id_to_index:
                     event.stop()
                     return
-                self.post_message(self.RangeMarkRequested(int(msg_id)))
+                # Move the keyboard cursor to the clicked row before
+                # posting the mark — otherwise the cursor stays on its
+                # prior row and subsequent arrows walk from there, not
+                # from the message the user just clicked.
+                if self._cursor_msg_id != msg_id:
+                    old_id = self._cursor_msg_id
+                    self._cursor_msg_id = msg_id
+                    affected = {msg_id}
+                    if old_id is not None:
+                        affected.add(old_id)
+                    self._repaint_for_ids(affected)
+                self.post_message(self.RangeMarkRequested(msg_id))
                 event.stop()
                 return
-        # Fallback for any per-row widgets that still carry data_msg_id
-        # (kept for forward-compat — currently unused after the blob
-        # rewrite, but cheap to leave).
-        msg_id = getattr(target, "data_msg_id", None)
-        if msg_id is not None:
-            self.post_message(self.RangeMarkRequested(msg_id))
 
     def action_mark_row(self) -> None:
         """Drop a range endpoint at the keyboard cursor's current row.
@@ -1046,6 +1024,11 @@ class HistoryView(VerticalScroll):
         if self._mark_active_id is not None:
             old_extension.add(self._mark_active_id)
 
+        # Reveal older chunks if the jump target lives above the
+        # rendered window — otherwise the cursor moves invisibly and
+        # the user loses it. Bounded by the chat size.
+        self._ensure_id_rendered(target_id)
+
         self._cursor_msg_id = target_id
         self._mark_anchor_id = None
         self._mark_active_id = None
@@ -1055,6 +1038,30 @@ class HistoryView(VerticalScroll):
             affected.add(old_id)
         self._repaint_for_ids(affected)
         self._scroll_cursor_into_view()
+
+    def _ensure_id_rendered(self, msg_id: int) -> bool:
+        """Auto-load older chunks until `msg_id` lives in a rendered chunk.
+
+        Returns True if the id is rendered after the call, False if it
+        isn't in `_all_messages` at all. Cheap when already rendered
+        (single lookup against `_id_to_index` + the visible-window math).
+        Called before every cursor-move scroll so Home / PageUp / Up at
+        the rendered top can't leave the cursor stranded above the
+        topmost chunk.
+        """
+        target_idx = self._id_to_index.get(msg_id)
+        if target_idx is None:
+            return False
+        n = len(self._all_messages)
+        # Visible window covers indices [n - _shown_count, n - 1].
+        # Loop is bounded by the chunk count — each iteration grows
+        # `_shown_count` by `LOAD_MORE_CHUNK` (or to `n`, whichever is
+        # smaller); we stop the moment the target enters the window.
+        while target_idx < n - self._shown_count:
+            if self._shown_count >= n:
+                break
+            self.action_load_older()
+        return target_idx >= n - self._shown_count
 
     def _viewport_height_lines(self) -> int:
         """Best-effort viewport height in terminal rows. Used by
@@ -1112,9 +1119,19 @@ class HistoryView(VerticalScroll):
         self._mark_start_id = self._mark_anchor_id
         self._mark_end_id = new_id
 
+        # Tell the app: shift+arrow updated the selection. Without this
+        # the visual highlight is correct but AppState's range_*_msg_id
+        # stay None, and Export ignores the selection entirely.
+        start_id = self._all_messages[lo].message_id
+        end_id = self._all_messages[hi].message_id
+        self.post_message(self.SelectionExtended(start_id, end_id))
+
         new_highlighted = set(self._in_range_ids)
         new_highlighted.add(self._mark_anchor_id)
         new_highlighted.add(new_id)
+        # Auto-load older chunks if the new cursor (or the anchor) is
+        # above the rendered window, so the extension stays visible.
+        self._ensure_id_rendered(new_id)
         self._repaint_for_ids({old_id, new_id} | old_highlighted | new_highlighted)
         self._scroll_cursor_into_view()
 
@@ -1150,6 +1167,10 @@ class HistoryView(VerticalScroll):
         self._cursor_msg_id = new_id
         self._mark_anchor_id = None
         self._mark_active_id = None
+        # Reveal older chunks if the new cursor is above the rendered
+        # window — page-up / up-arrow at the rendered top would otherwise
+        # leave the cursor invisible above the topmost chunk.
+        self._ensure_id_rendered(new_id)
         self._repaint_for_ids({old_id, new_id} | old_extension)
         self._scroll_cursor_into_view()
 
@@ -1166,8 +1187,9 @@ class HistoryView(VerticalScroll):
         if chunk is None or chunk.widget is None:
             return
 
-        # Cursor's y inside the chunk = day-headers above + cumulative
-        # rendered-line count of all messages above it within the chunk.
+        # Cursor's y inside the chunk = non-message lines above (day
+        # headers + their blank separators) + cumulative rendered-line
+        # count of all messages above it within the chunk.
         try:
             idx = chunk.msg_ids.index(cursor)
         except ValueError:
@@ -1175,7 +1197,7 @@ class HistoryView(VerticalScroll):
         lines_above = sum(
             chunk.row_line_counts[mid] for mid in chunk.msg_ids[:idx]
         )
-        y_in_chunk = lines_above + chunk.day_header_prefix_count[idx]
+        y_in_chunk = lines_above + chunk.prefix_lines_above[idx]
 
         def _apply():
             # `region.y` is SCREEN-relative (already adjusted for
