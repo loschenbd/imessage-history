@@ -177,7 +177,10 @@ class TestHistoryViewCursor(unittest.IsolatedAsyncioTestCase):
 
     async def test_cursor_visual_renders_on_exactly_one_row(self):
         """The cursored row must carry both the B (row tint) and D
-        (cursor bar) backgrounds; no other row carries either."""
+        (cursor bar) backgrounds. For a continuation message that's
+        one tint + one bar span; for a run head it's two of each (the
+        speaker header line picks up the same cursor styling so the
+        cursor reads as "on this whole message")."""
         from imessage_export.tui.app.widgets import HistoryView
         from imessage_export.tui.app import history_render
         from imessage_export.tui.theme import DAWNFOX
@@ -190,16 +193,26 @@ class TestHistoryViewCursor(unittest.IsolatedAsyncioTestCase):
 
             colors = history_render.selection_colors(DAWNFOX)
             blob = history._topmost_widget.renderable
-            # Exactly one row carries the cursor tint background.
+            chunk = history._topmost_widget._chunk_render
+            cursor = history._cursor_msg_id
+            # The cursor lands on a single message; if that message is
+            # the head of its run, header AND body get tinted/barred.
+            expected = 2 if cursor in chunk.header_offsets else 1
+
+            # Filter on the `on <hex>` form so we count BACKGROUND
+            # paints only — the speaker-name segments share the
+            # accent_alt hex but use it as foreground bold color, not
+            # as bg, so they must not be counted as bar spans.
+            tint_bg = f"on {colors.cursor_tint_bg}"
             tint_spans = [s for s in blob.spans
-                          if colors.cursor_tint_bg in str(s.style)]
-            self.assertEqual(len(tint_spans), 1)
-            # Exactly one row carries the cursor bar background on its
-            # leading 2 cols.
+                          if tint_bg in str(s.style)]
+            self.assertEqual(len(tint_spans), expected)
+
+            bar_bg = f"on {colors.cursor_bar_default}"
             bar_spans = [s for s in blob.spans
-                         if colors.cursor_bar_default in str(s.style)
+                         if bar_bg in str(s.style)
                          and (s.end - s.start) == 2]
-            self.assertEqual(len(bar_spans), 1)
+            self.assertEqual(len(bar_spans), expected)
 
     async def test_cursor_move_repaints_only_affected_chunk(self):
         """Moving the cursor by one message must only repaint the
@@ -432,6 +445,182 @@ class TestHistoryViewCursor(unittest.IsolatedAsyncioTestCase):
             # virtual_size depend on the stub; just assert the scroll
             # actually moved during the walk.
             self.assertNotEqual(history.scroll_y, start_scroll_y - 1)
+
+    async def test_arrow_snaps_view_to_offscreen_cursor(self):
+        """Arrow keys are cursor-driven: the cursor is the source of
+        truth, and the view follows. When the cursor is OFF-SCREEN
+        (e.g. user clicked a message far up and then mouse-scrolled
+        back to the bottom), the next arrow press moves the cursor by
+        one and the view snaps to it. The previous attempt to anchor
+        the cursor to the visible viewport made arrow keys feel
+        disconnected from the cursor's logical position; this contract
+        reverts that."""
+        app, HistoryView = self._build_stub_app()
+        async with app.run_test(size=(80, 30)) as pilot:
+            history = app.query_one(HistoryView)
+            history.render_messages(_fake_messages(1177))
+            await pilot.pause()
+            await pilot.pause()
+            history._cursor_msg_id = 200
+            history.scroll_end(animate=False)
+            await pilot.pause()
+            start_scroll_y = history.scroll_y
+            self.assertGreater(start_scroll_y, 500,
+                               "precondition: viewport scrolled to bottom")
+            history.action_cursor_up()
+            await pilot.pause()
+            # Cursor moves by exactly 1 from its logical position.
+            self.assertEqual(history._cursor_msg_id, 199)
+            # View snapped to follow the cursor — scroll_y is now near
+            # where msg 199 renders (far above the bottom).
+            self.assertLess(
+                history.scroll_y, start_scroll_y - 100,
+                f"view should follow the cursor: scroll_y stayed at "
+                f"{history.scroll_y} (started {start_scroll_y}); "
+                f"expected it to snap up to where msg 199 renders.",
+            )
+
+    async def test_chat_switch_clears_shift_arrow_anchor(self):
+        """Switching chats while a shift+arrow extension is in flight must
+        not leave the old chat's `_mark_anchor_id` / `_mark_active_id`
+        pointing at message ids that no longer exist. Reproducer: pressing
+        shift+down in the new chat then crashed with `KeyError` because
+        `_extend_selection` looked the stale anchor up in the new chat's
+        `_id_to_index`.
+        """
+        from imessage_export.models import Message
+
+        def _msgs(start, n):
+            return [
+                Message(
+                    message_id=i,
+                    timestamp=f"2026-01-01 {(i // 3600) % 24:02d}:{(i // 60) % 60:02d}:{i % 60:02d}",
+                    timestamp_utc=f"2026-01-01T{(i // 3600) % 24:02d}:{(i // 60) % 60:02d}:{i % 60:02d}+00:00",
+                    chat_id=1, sender_handle=None, is_from_me=1, author_label="Me",
+                    text=f"msg {i}", has_attachment=0, attachment_filenames=[],
+                    kind="message", is_edited=0, reaction=None, app_bundle=None,
+                )
+                for i in range(start, start + n)
+            ]
+
+        app, HistoryView = self._build_stub_app()
+        async with app.run_test() as pilot:
+            history = app.query_one(HistoryView)
+            history.render_messages(_msgs(0, 10))           # chat A: ids 0..9
+            await pilot.pause()
+            history._cursor_msg_id = 3
+            history.action_extend_down()                    # anchor=3, active=4
+            await pilot.pause()
+            self.assertEqual(history._mark_anchor_id, 3)
+            history.render_messages(_msgs(1000, 10))        # chat B: disjoint ids
+            await pilot.pause()
+            # render_messages must reset the in-flight shift state — anything
+            # else means shift+arrow in chat B crashes on KeyError 3.
+            self.assertIsNone(history._mark_anchor_id)
+            self.assertIsNone(history._mark_active_id)
+            history.action_extend_down()  # must not raise
+            await pilot.pause()
+            self.assertIsNotNone(history._mark_anchor_id)
+
+    async def test_click_moves_cursor_to_clicked_message(self):
+        """Clicking a message must move the keyboard cursor to that row.
+        Otherwise the visual cursor stays where it was (often on the
+        latest msg) and subsequent arrows walk from a different row than
+        the one the user just clicked — a confusing inconsistency."""
+        from imessage_export.models import Message
+
+        app, HistoryView = self._build_stub_app()
+        async with app.run_test() as pilot:
+            history = app.query_one(HistoryView)
+            history.render_messages(_fake_messages(20))
+            await pilot.pause()
+            # Cursor defaults to the latest message.
+            self.assertEqual(history._cursor_msg_id, 19)
+
+            class _FakeStyle:
+                meta = {"msg_id": 5}
+
+            class _FakeEvent:
+                widget = history._topmost_widget
+                style = _FakeStyle()
+                def stop(self): pass
+
+            history.on_click(_FakeEvent())
+            await pilot.pause()
+            self.assertEqual(history._cursor_msg_id, 5)
+
+    async def test_home_autoloads_older_chunks_until_cursor_visible(self):
+        """Pressing Home with hidden older messages must auto-load until
+        the target message lives in a rendered chunk. Otherwise the
+        cursor jumps invisibly past the rendered window and no scroll
+        happens — the user loses the cursor."""
+        app, HistoryView = self._build_stub_app()
+        async with app.run_test() as pilot:
+            history = app.query_one(HistoryView)
+            # 3 chunks worth so the initial render leaves 2 chunks hidden.
+            history.render_messages(_fake_messages(HistoryView.PREVIEW_CAP * 3))
+            await pilot.pause()
+            self.assertEqual(history._shown_count, HistoryView.PREVIEW_CAP)
+
+            history.action_cursor_to_start()
+            await pilot.pause()
+            # All older chunks loaded; cursor visible in a mounted chunk.
+            self.assertEqual(history._cursor_msg_id, 0)
+            self.assertIsNotNone(history._find_chunk_for_id(0))
+
+    async def test_arrow_up_at_rendered_top_autoloads(self):
+        """Up-arrow at the oldest rendered message must auto-load the
+        next older chunk so the cursor stays visible. Otherwise it
+        walks into unrendered territory and disappears."""
+        app, HistoryView = self._build_stub_app()
+        async with app.run_test() as pilot:
+            history = app.query_one(HistoryView)
+            history.render_messages(_fake_messages(HistoryView.PREVIEW_CAP * 3))
+            await pilot.pause()
+            # Park the cursor on the oldest *rendered* message AND
+            # scroll the viewport so that row is visible. Without the
+            # scroll, the cursor is off-screen above the viewport (which
+            # ended at the bottom after render_messages → scroll_end);
+            # the new snap-to-visible safety would then re-anchor the
+            # cursor to the visible bottom before the delta is applied,
+            # masking the auto-load this test is exercising.
+            oldest_rendered = HistoryView.PREVIEW_CAP * 3 - HistoryView.PREVIEW_CAP
+            history._cursor_msg_id = oldest_rendered
+            history.scroll_to(y=0, animate=False)
+            await pilot.pause()
+            history.action_cursor_up()
+            await pilot.pause()
+            self.assertEqual(history._cursor_msg_id, oldest_rendered - 1)
+            self.assertIsNotNone(history._find_chunk_for_id(history._cursor_msg_id))
+
+    async def test_shift_arrow_posts_selection_extended(self):
+        """Shift+arrow must publish the resulting (start, end) range so
+        the app can fold it into AppState. Without this, the visual
+        selection is correct but Export ignores it and dumps the whole
+        chat — the user sees their selection silently discarded."""
+        app, HistoryView = self._build_stub_app()
+        async with app.run_test() as pilot:
+            history = app.query_one(HistoryView)
+            history.render_messages(_fake_messages(10))
+            await pilot.pause()
+            history._cursor_msg_id = 4
+
+            posted: list = []
+            original_post = history.post_message
+            history.post_message = lambda m: posted.append(m) or original_post(m)
+
+            history.action_extend_down()
+            await pilot.pause()
+            history.action_extend_down()
+            await pilot.pause()
+
+            extends = [m for m in posted
+                       if isinstance(m, HistoryView.SelectionExtended)]
+            self.assertGreater(len(extends), 0,
+                               "shift+arrow must post SelectionExtended")
+            last = extends[-1]
+            self.assertEqual(last.start_id, 4)
+            self.assertEqual(last.end_id, 6)
 
     async def test_single_arrow_does_not_yank_scroll_to_top(self):
         """Regression: a single arrow press from inside the viewport

@@ -45,22 +45,30 @@ class ImessageExportApp(App):
     #main { height: 1fr; }
     #history-pane { width: 1fr; height: 1fr; }
 
-    Sidebar { background: $surface; border-right: solid $panel; }
-    Sidebar > .selected { background: $panel; color: $primary; text-style: bold; }
-    Sidebar.region-active { border-right: thick $accent; }
+    /* Sidebar carries its own bg ($surface contrast against history's
+       $background is what visually splits the two panes once the
+       heavy border is gone). The thin muted divider between them
+       comes from Sidebar.DEFAULT_CSS (`border-right: vkey $border-soft`). */
+    /* Reserve the focus-indicator border space PERMANENTLY (transparent
+       when inactive, $accent when active). Toggling a border between
+       "none" and "1 cell" shrinks the content width by 1 — and the
+       HistoryView caches per-row line counts at the width the chunk
+       was built at, so any post-build width change makes the cursor's
+       scroll math drift by hundreds of cells (one extra wrap per
+       long-URL message). Reserving the cell up front pins content
+       width across focus toggles. */
+    Sidebar { background: $surface; border-left: vkey transparent; }
+    Sidebar.region-active { border-left: vkey $accent; }
 
-    ChatHeader { background: $surface; border-bottom: solid $panel; height: 2; }
-
-    HistoryView { background: $background; color: $foreground; }
-    HistoryView.region-active { border-left: thick $accent; }
-    HistoryView .day-header { color: $day-header; text-style: bold; }
-    HistoryView .gap-marker { color: $muted; text-style: italic; }
-    HistoryView .speaker-other { color: $primary; text-style: bold; }
-    HistoryView .speaker-me    { color: $accent;  text-style: bold; }
-    HistoryView .timestamp     { color: $muted; }
+    HistoryView { background: $background; color: $foreground; border-left: vkey transparent; }
+    HistoryView.region-active { border-left: vkey $accent; }
+    /* Speaker/day-header/timestamp styling lives inside the Rich Text
+       baked by history_render.format_run — palette hex is composed onto
+       each segment's Style at build time, so there are no class-based
+       selectors to manage here. */
 
     StatusLine { background: $surface; color: $foreground; }
-    ActionBar  { background: $panel;   color: $foreground; }
+    ActionBar  { background: $panel;   color: $foreground; border-top: thick transparent; }
     ActionBar.region-active { border-top: thick $accent; }
     ActionBar .key { color: $primary; text-style: bold; }
     """
@@ -349,6 +357,19 @@ class ImessageExportApp(App):
             self.state.range_end_msg_id = None
             history.filter_messages(event.window)
         self.state.last_export_status = None
+        self._refresh_status()
+
+    def on_history_view_selection_extended(self, event: HistoryView.SelectionExtended) -> None:
+        """Shift+arrow extended the keyboard selection. Mirror the new
+        (start, end) into AppState so Export bracket-resolves against
+        the selection instead of falling back to mode="all"."""
+        self.state.range_start_msg_id = event.start_id
+        self.state.range_end_msg_id = event.end_id
+        self.state.window_source = "selection"
+        self.state.last_export_status = None
+        # No `_repaint_marks` call: HistoryView already painted the
+        # selection during `_extend_selection` — calling apply_marks
+        # here would rebuild the same highlight set redundantly.
         self._refresh_status()
 
     def on_history_view_range_mark_requested(self, event: HistoryView.RangeMarkRequested) -> None:
