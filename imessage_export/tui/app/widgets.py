@@ -1006,6 +1006,26 @@ class HistoryView(VerticalScroll):
         """Scroll to the bottom (latest message)."""
         self.scroll_end(animate=False)
 
+    def _check_autoload_threshold(self) -> None:
+        """If the viewport is within AUTOLOAD_TOP_MARGIN of the top and
+        older messages are still hidden, fire one action_load_older.
+
+        Bounded by the chat size: action_load_older itself short-circuits
+        when _shown_count >= len(_all_messages). The existing scroll-
+        restore logic in action_load_older keeps the user's reading
+        position stable across the mount, so from the user's perspective
+        it feels like infinite scroll.
+        """
+        if self._shown_count >= len(self._all_messages):
+            return
+        if self.scroll_y < self.AUTOLOAD_TOP_MARGIN:
+            self.action_load_older()
+
+    def on_scroll(self, event) -> None:
+        """Mouse-wheel / trackpad scroll: re-check autoload threshold so
+        scroll-to-top with the wheel works the same as arrow keys."""
+        self._check_autoload_threshold()
+
     def action_cursor_up(self) -> None:
         self._move_cursor(-1)
 
