@@ -895,19 +895,18 @@ class HistoryView(VerticalScroll):
             self.start_id = start_id
             self.end_id = end_id
 
+    AUTOLOAD_TOP_MARGIN = 5  # rows from top of loaded content that
+                             # trigger an auto-load of the next older chunk
+
     BINDINGS = [
-        ("up", "cursor_up", "Previous message"),
-        ("down", "cursor_down", "Next message"),
-        ("shift+up", "extend_up", "Extend selection up"),
-        ("shift+down", "extend_down", "Extend selection down"),
-        ("home", "cursor_to_start", "Jump to oldest loaded"),
-        ("end", "cursor_to_end", "Jump to latest"),
+        ("up", "scroll_up", "Scroll up"),
+        ("down", "scroll_down", "Scroll down"),
         ("pageup", "page_up", "Page up"),
         ("pagedown", "page_down", "Page down"),
-        ("enter", "mark_row", "Mark range endpoint"),
-        ("space", "mark_row", "Mark range endpoint"),
-        ("escape", "clear_marks", "Clear marks"),
-        ("o", "load_older", "Load 2,000 older messages"),
+        ("home", "scroll_top", "Top of loaded"),
+        ("end", "scroll_bottom", "Latest message"),
+        ("o", "load_older", "Load older messages"),
+        ("escape", "clear_marks", "Clear range marks"),
     ]
 
     def on_key(self, event) -> None:
@@ -979,6 +978,34 @@ class HistoryView(VerticalScroll):
         if self._cursor_msg_id is not None:
             self.post_message(self.RangeMarkRequested(self._cursor_msg_id))
 
+    def action_scroll_up(self) -> None:
+        """Scroll viewport up by 1 row; auto-load older chunk if near top."""
+        self.scroll_relative(y=-1, animate=False)
+        self._check_autoload_threshold()
+
+    def action_scroll_down(self) -> None:
+        """Scroll viewport down by 1 row."""
+        self.scroll_relative(y=1, animate=False)
+
+    def action_page_up(self) -> None:
+        """Scroll viewport up by one viewport height; auto-load if near top."""
+        self.scroll_relative(y=-self._viewport_height_lines(), animate=False)
+        self._check_autoload_threshold()
+
+    def action_page_down(self) -> None:
+        """Scroll viewport down by one viewport height."""
+        self.scroll_relative(y=self._viewport_height_lines(), animate=False)
+
+    def action_scroll_top(self) -> None:
+        """Scroll to the top of currently-loaded content; auto-load if older
+        chunks exist (the affordance stays visible regardless)."""
+        self.scroll_to(y=0, animate=False)
+        self._check_autoload_threshold()
+
+    def action_scroll_bottom(self) -> None:
+        """Scroll to the bottom (latest message)."""
+        self.scroll_end(animate=False)
+
     def action_cursor_up(self) -> None:
         self._move_cursor(-1)
 
@@ -1004,12 +1031,6 @@ class HistoryView(VerticalScroll):
             return
         target = self._all_messages[-1].message_id
         self._jump_cursor_to(target)
-
-    def action_page_up(self) -> None:
-        self._move_cursor(-max(5, self._viewport_height_lines()))
-
-    def action_page_down(self) -> None:
-        self._move_cursor(+max(5, self._viewport_height_lines()))
 
     def _jump_cursor_to(self, target_id: int) -> None:
         if self._cursor_msg_id == target_id:
