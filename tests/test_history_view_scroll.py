@@ -239,8 +239,13 @@ class TestHistoryViewScroll(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
 
             # No selection-extended message (the class is gone), no
-            # range mark posted, viewport unchanged.
-            self.assertEqual(posted, [])
+            # range mark posted, viewport unchanged. Filter to
+            # HistoryView-namespaced messages — the Pilot itself posts
+            # Key + Callback noise via the shared post_message channel,
+            # which is irrelevant to the cursor-removal assertion.
+            domain = [m for m in posted
+                      if isinstance(m, HistoryView.RangeMarkRequested)]
+            self.assertEqual(domain, [])
             self.assertEqual(history.scroll_y, scroll_before)
 
     async def test_click_drops_mark_and_nothing_else(self):
@@ -269,8 +274,14 @@ class TestHistoryViewScroll(unittest.IsolatedAsyncioTestCase):
                      if isinstance(m, HistoryView.RangeMarkRequested)]
             self.assertEqual(len(marks), 1)
             self.assertEqual(marks[0].msg_id, 7)
-            # No other posted messages — SelectionExtended is gone.
-            self.assertEqual(len(posted), 1)
+            # No other HistoryView-namespaced messages — SelectionExtended
+            # is gone. Filter to HistoryView messages (the Pilot also
+            # posts Key + Callback events on the shared channel, which
+            # are framework noise unrelated to the cursor-removal
+            # assertion).
+            history_msgs = [m for m in posted
+                            if type(m).__qualname__.startswith("HistoryView.")]
+            self.assertEqual(len(history_msgs), 1)
 
     async def test_left_arrow_bridges_to_sidebar(self):
         """Existing behavior — guard against accidental removal."""

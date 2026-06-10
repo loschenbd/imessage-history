@@ -467,23 +467,10 @@ class HistoryView(VerticalScroll):
         self._mark_start_id: int | None = None
         self._mark_end_id: int | None = None
         self._in_range_ids: set[int] = set()
-        # Keyboard cursor. Independent of the mark endpoints — the user
-        # moves the cursor row-by-row with up/down arrows, and then
-        # presses space/enter to drop a range endpoint at the cursor
-        # position. `history_render.paint` paints a `▸ ` gutter marker
-        # on the cursored row so the user can see where their keyboard
-        # focus sits. None means "no cursor" (e.g. before any chat is
-        # loaded).
-        self._cursor_msg_id: int | None = None
-        # O(1) msg_id → index lookup for cursor moves + stale-id
-        # detection. Rebuilt by render_messages and extended by
-        # action_load_older.
-        self._id_to_index: dict[int, int] = {}
-        # Shift+arrow selection state. anchor is set on first
-        # shift+arrow press; active follows the cursor while shift is
-        # held. Plain Up/Down clears both.
-        self._mark_anchor_id: int | None = None
-        self._mark_active_id: int | None = None
+        # Set of every msg_id present in the loaded chat — used by
+        # on_click to drop stale-meta clicks after a filter or chat
+        # switch. O(1) membership lookup, rebuilt in render_messages.
+        self._loaded_ids: set[int] = set()
         # Contacts mapping forwarded to history_render.format_row. Empty
         # by default — currently unused by the formatter (forward-compat
         # for handle→display-name swap-in), kept so _ChunkRender.build
@@ -509,7 +496,7 @@ class HistoryView(VerticalScroll):
         # chat survive (otherwise a fresh render_messages would compute
         # its hidden_count from the wrong base).
         self._all_messages = []
-        self._id_to_index = {}
+        self._loaded_ids = set()
         self._unfiltered_messages = []
         self._shown_count = 0
         self._topmost_widget = None
@@ -518,7 +505,6 @@ class HistoryView(VerticalScroll):
         self._mark_start_id = None
         self._mark_end_id = None
         self._in_range_ids = set()
-        self._cursor_msg_id = None
         # Use a class instead of an id so that calling show_placeholder
         # twice in quick succession (remove_children is async; the prior
         # widget may still be in the node tree) doesn't collide on a
@@ -550,15 +536,7 @@ class HistoryView(VerticalScroll):
         if not _from_filter:
             self._unfiltered_messages = list(messages)
         self._all_messages = list(messages)
-        self._id_to_index = {m.message_id: i for i, m in enumerate(self._all_messages)}
-        # A pending shift+arrow extension from a prior chat would point
-        # `_mark_anchor_id` / `_mark_active_id` at message ids that don't
-        # exist in this chat — the first shift+arrow press would then
-        # crash on `_id_to_index[stale_anchor]`. Reset both. Clicked
-        # marks are cleared at the app level via `selected_chat_id`
-        # change, so we don't touch _mark_start_id / _mark_end_id here.
-        self._mark_anchor_id = None
-        self._mark_active_id = None
+        self._loaded_ids = {m.message_id for m in self._all_messages}
         self.remove_children()
         self._placeholder_visible = False
         if not self._all_messages:
@@ -574,24 +552,6 @@ class HistoryView(VerticalScroll):
         visible = self._all_messages[-self._shown_count:]
         hidden = len(self._all_messages) - self._shown_count
 
-        # Seed the keyboard cursor on the most-recent message — that's
-        # where the user is reading from, so up-arrow walks backward
-        # through history in the direction they're scanning. Preserve
-        # a still-valid cursor across re-renders (e.g. filter toggles)
-        # so the user doesn't lose their place.
-        loaded_ids = {m.message_id for m in self._all_messages}
-        if self._cursor_msg_id is None:
-            # No prior cursor — park on the latest (cold load).
-            self._cursor_msg_id = self._all_messages[-1].message_id
-        elif self._cursor_msg_id not in loaded_ids:
-            # Cursor was set but its id was filtered out. Pick the
-            # remaining message whose timestamp is nearest to the
-            # excluded cursor's timestamp — bisecting on the loaded
-            # list (sorted by timestamp by construction).
-            self._cursor_msg_id = self._nearest_loaded_by_timestamp(
-                self._cursor_msg_id, _from_filter and self._unfiltered_messages
-            ) or self._all_messages[-1].message_id
-
         from . import history_render
 
         # Build the cached _ChunkRender for the visible slice. The
@@ -606,7 +566,7 @@ class HistoryView(VerticalScroll):
         )
         marks = history_render.MarkState(
             self._mark_start_id, self._mark_end_id, frozenset(self._in_range_ids))
-        decorated = history_render.paint(chunk, self._cursor_msg_id, marks, palette)
+        decorated = history_render.paint(chunk, None, marks, palette)
         # Use classes (not id) — remove_children() is async, so a rapid
         # chat-switch can still have the previous "recent-chunk" in the
         # node tree when we mount the next one. Classes coexist; ids don't.
@@ -623,47 +583,6 @@ class HistoryView(VerticalScroll):
         # user always gets feedback).
         self._refresh_top_indicator(hidden)
         self.call_after_refresh(self.scroll_end, animate=False)
-
-    def _nearest_loaded_by_timestamp(
-        self,
-        excluded_id: int,
-        unfiltered: list | None,
-    ) -> int | None:
-        """Return the message_id in `_all_messages` whose timestamp is
-        nearest to `excluded_id`'s timestamp. `unfiltered` is the pre-
-        filter list (kept for filter callers); falls back to None if
-        we can't find the excluded message there either."""
-        excluded_ts = None
-        if unfiltered:
-            for m in unfiltered:
-                if m.message_id == excluded_id:
-                    excluded_ts = m.timestamp
-                    break
-        if excluded_ts is None:
-            return None
-        # _all_messages is ordered by timestamp; bisect on it.
-        import bisect
-        timestamps = [m.timestamp for m in self._all_messages]
-        i = bisect.bisect_left(timestamps, excluded_ts)
-        # Pick the closer of i-1 and i (clamped to bounds).
-        candidates = []
-        if i > 0:
-            candidates.append(i - 1)
-        if i < len(self._all_messages):
-            candidates.append(i)
-        if not candidates:
-            return None
-        best = min(candidates,
-                   key=lambda k: abs(self._compare_ts_to(
-                       self._all_messages[k].timestamp, excluded_ts)))
-        return self._all_messages[best].message_id
-
-    def _compare_ts_to(self, ts_a: str, ts_b: str) -> int:
-        """Cheap timestamp distance — string lex order is fine because
-        both are zero-padded ISO-format. Returns ordering, not duration."""
-        if ts_a == ts_b:
-            return 0
-        return 1 if ts_a > ts_b else -1
 
     def filter_messages(self, window: Optional[dict]) -> None:
         """Apply (or clear) the WindowStrip filter and re-render.
@@ -822,9 +741,9 @@ class HistoryView(VerticalScroll):
         marks = history_render.MarkState(
             self._mark_start_id, self._mark_end_id, frozenset(self._in_range_ids))
         older_decorated = history_render.paint(
-            chunk, self._cursor_msg_id, marks, palette)
+            chunk, None, marks, palette)
         self._shown_count = new_shown
-        # _id_to_index is already complete (every loaded message lives
+        # _loaded_ids is already complete (every loaded message lives
         # in _all_messages from chat-load time — load-older only widens
         # _shown_count). No rebuild needed here.
         remaining_hidden = len(self._all_messages) - new_shown
@@ -892,20 +811,6 @@ class HistoryView(VerticalScroll):
             super().__init__()
             self.msg_id = msg_id
 
-    class SelectionExtended(TextualMessage):
-        """User extended the keyboard selection (shift+arrow).
-
-        Carries the full (start_id, end_id) span so the app can drop it
-        straight into `state.range_*_msg_id` and `window_source =
-        "selection"`. Without this, shift+arrow updates the visual
-        highlight but never tells AppState — Export then ignores the
-        selection and dumps the whole chat.
-        """
-        def __init__(self, start_id: int, end_id: int) -> None:
-            super().__init__()
-            self.start_id = start_id
-            self.end_id = end_id
-
     AUTOLOAD_TOP_MARGIN = 5  # rows from top of loaded content that
                              # trigger an auto-load of the next older chunk
 
@@ -956,38 +861,15 @@ class HistoryView(VerticalScroll):
             if msg_id is not None:
                 # Drop clicks whose msg_id was filtered out / unloaded
                 # mid-prune. The post-handler can't recover from a stale
-                # id cleanly, and silently dropping matches the cursor
+                # id cleanly, and silently dropping matches the prior
                 # stale-id recovery pattern.
                 msg_id = int(msg_id)
-                if msg_id not in self._id_to_index:
+                if msg_id not in self._loaded_ids:
                     event.stop()
                     return
-                # Move the keyboard cursor to the clicked row before
-                # posting the mark — otherwise the cursor stays on its
-                # prior row and subsequent arrows walk from there, not
-                # from the message the user just clicked.
-                if self._cursor_msg_id != msg_id:
-                    old_id = self._cursor_msg_id
-                    self._cursor_msg_id = msg_id
-                    affected = {msg_id}
-                    if old_id is not None:
-                        affected.add(old_id)
-                    self._repaint_for_ids(affected)
                 self.post_message(self.RangeMarkRequested(msg_id))
                 event.stop()
                 return
-
-    def action_mark_row(self) -> None:
-        """Drop a range endpoint at the keyboard cursor's current row.
-
-        Posts the same RangeMarkRequested message a mouse click would,
-        so the app-level mark logic (nearest-endpoint adjustment, range
-        computation, repaint) doesn't need to know whether the request
-        came from a click or a key. Silent no-op when no cursor is set
-        (e.g. empty chat).
-        """
-        if self._cursor_msg_id is not None:
-            self.post_message(self.RangeMarkRequested(self._cursor_msg_id))
 
     def action_scroll_up(self) -> None:
         """Scroll viewport up by 1 row; auto-load older chunk if near top."""
@@ -1068,84 +950,6 @@ class HistoryView(VerticalScroll):
         finally:
             self._autoload_in_flight = False
 
-    def action_cursor_up(self) -> None:
-        self._move_cursor(-1)
-
-    def action_cursor_down(self) -> None:
-        self._move_cursor(+1)
-
-    def action_extend_up(self) -> None:
-        self._extend_selection(-1)
-
-    def action_extend_down(self) -> None:
-        self._extend_selection(+1)
-
-    def action_cursor_to_start(self) -> None:
-        """Jump to the oldest loaded message."""
-        if not self._all_messages:
-            return
-        target = self._all_messages[0].message_id
-        self._jump_cursor_to(target)
-
-    def action_cursor_to_end(self) -> None:
-        """Jump to the latest message."""
-        if not self._all_messages:
-            return
-        target = self._all_messages[-1].message_id
-        self._jump_cursor_to(target)
-
-    def _jump_cursor_to(self, target_id: int) -> None:
-        if self._cursor_msg_id == target_id:
-            return
-        old_id = self._cursor_msg_id
-        # Home/End end an in-progress shift+arrow extension but leave
-        # any COMMITTED marks alone — matches `_move_cursor`'s behavior
-        # for plain arrows. Esc is the explicit clear path.
-        old_extension: set[int] = set()
-        if self._mark_anchor_id is not None:
-            old_extension.add(self._mark_anchor_id)
-        if self._mark_active_id is not None:
-            old_extension.add(self._mark_active_id)
-
-        # Reveal older chunks if the jump target lives above the
-        # rendered window — otherwise the cursor moves invisibly and
-        # the user loses it. Bounded by the chat size.
-        self._ensure_id_rendered(target_id)
-
-        self._cursor_msg_id = target_id
-        self._mark_anchor_id = None
-        self._mark_active_id = None
-
-        affected = {target_id} | old_extension
-        if old_id is not None:
-            affected.add(old_id)
-        self._repaint_for_ids(affected)
-        self._scroll_cursor_into_view()
-
-    def _ensure_id_rendered(self, msg_id: int) -> bool:
-        """Auto-load older chunks until `msg_id` lives in a rendered chunk.
-
-        Returns True if the id is rendered after the call, False if it
-        isn't in `_all_messages` at all. Cheap when already rendered
-        (single lookup against `_id_to_index` + the visible-window math).
-        Called before every cursor-move scroll so Home / PageUp / Up at
-        the rendered top can't leave the cursor stranded above the
-        topmost chunk.
-        """
-        target_idx = self._id_to_index.get(msg_id)
-        if target_idx is None:
-            return False
-        n = len(self._all_messages)
-        # Visible window covers indices [n - _shown_count, n - 1].
-        # Loop is bounded by the chunk count — each iteration grows
-        # `_shown_count` by `LOAD_MORE_CHUNK` (or to `n`, whichever is
-        # smaller); we stop the moment the target enters the window.
-        while target_idx < n - self._shown_count:
-            if self._shown_count >= n:
-                break
-            self.action_load_older()
-        return target_idx >= n - self._shown_count
-
     def _viewport_height_lines(self) -> int:
         """Best-effort viewport height in terminal rows. Used by
         page up/down to compute a sensible jump distance. Falls back
@@ -1156,176 +960,6 @@ class HistoryView(VerticalScroll):
         except Exception:
             h = 0
         return h if h > 0 else 20
-
-    def _extend_selection(self, delta: int) -> None:
-        """Move the cursor by `delta` and grow the selection from a
-        fixed anchor. The anchor is set on the first shift+arrow press
-        (to the cursor's current position) and stays put while shift
-        is held; the active follows the cursor.
-        """
-        if not self._all_messages or self._cursor_msg_id is None:
-            return
-        i = self._id_to_index.get(self._cursor_msg_id)
-        if i is None:
-            self._cursor_msg_id = self._all_messages[-1].message_id
-            self._repaint_for_ids({self._cursor_msg_id})
-            self._scroll_cursor_into_view()
-            return
-        new_i = max(0, min(len(self._all_messages) - 1, i + delta))
-        if new_i == i and self._mark_anchor_id == self._cursor_msg_id:
-            return  # at a bound + no new extension to apply
-        old_id = self._cursor_msg_id
-        new_id = self._all_messages[new_i].message_id
-
-        # Capture OLD highlighted ids before we mutate, so the painter
-        # has a precise set to clear.
-        old_highlighted = set(self._in_range_ids)
-        if self._mark_anchor_id is not None:
-            old_highlighted.add(self._mark_anchor_id)
-        if self._mark_active_id is not None:
-            old_highlighted.add(self._mark_active_id)
-
-        if self._mark_anchor_id is None:
-            self._mark_anchor_id = old_id   # anchor where shift+arrow began
-
-        self._cursor_msg_id = new_id
-        self._mark_active_id = new_id
-
-        # Recompute in_range from (anchor, active) via id_to_index.
-        a = self._id_to_index[self._mark_anchor_id]
-        b = self._id_to_index[new_id]
-        lo, hi = (a, b) if a <= b else (b, a)
-        self._in_range_ids = {self._all_messages[k].message_id
-                              for k in range(lo, hi + 1)}
-        # Mirror anchor/active into the legacy mark_start_id/mark_end_id
-        # so apply_marks logic + the export-window flow stays consistent.
-        self._mark_start_id = self._mark_anchor_id
-        self._mark_end_id = new_id
-
-        # Tell the app: shift+arrow updated the selection. Without this
-        # the visual highlight is correct but AppState's range_*_msg_id
-        # stay None, and Export ignores the selection entirely.
-        start_id = self._all_messages[lo].message_id
-        end_id = self._all_messages[hi].message_id
-        self.post_message(self.SelectionExtended(start_id, end_id))
-
-        new_highlighted = set(self._in_range_ids)
-        new_highlighted.add(self._mark_anchor_id)
-        new_highlighted.add(new_id)
-        # Auto-load older chunks if the new cursor (or the anchor) is
-        # above the rendered window, so the extension stays visible.
-        self._ensure_id_rendered(new_id)
-        self._repaint_for_ids({old_id, new_id} | old_highlighted | new_highlighted)
-        self._scroll_cursor_into_view()
-
-    def _move_cursor(self, delta: int) -> None:
-        if not self._all_messages or self._cursor_msg_id is None:
-            return
-        i = self._id_to_index.get(self._cursor_msg_id)
-        if i is None:
-            # Stale cursor — chat-switch race. Park on the latest.
-            self._cursor_msg_id = self._all_messages[-1].message_id
-            self._repaint_for_ids({self._cursor_msg_id})
-            self._scroll_cursor_into_view()
-            return
-        new_i = max(0, min(len(self._all_messages) - 1, i + delta))
-        if new_i == i:
-            return
-        old_id = self._cursor_msg_id
-        new_id = self._all_messages[new_i].message_id
-        # Plain arrow ends an in-progress shift+arrow extension by
-        # clearing the anchor/active state, but the COMMITTED marks
-        # (`_mark_start_id` / `_mark_end_id` / `_in_range_ids`) persist
-        # — those are the user-visible selection backgrounds the user
-        # set via click / space / enter (or by stopping at the end of a
-        # shift+arrow extension, where the mirror in `_extend_selection`
-        # promotes anchor/active into the committed pair). The painter
-        # needs the old anchor/active in the repaint set so any
-        # extension-only background fades cleanly.
-        old_extension: set[int] = set()
-        if self._mark_anchor_id is not None:
-            old_extension.add(self._mark_anchor_id)
-        if self._mark_active_id is not None:
-            old_extension.add(self._mark_active_id)
-        self._cursor_msg_id = new_id
-        self._mark_anchor_id = None
-        self._mark_active_id = None
-        # Reveal older chunks if the new cursor is above the rendered
-        # window — page-up / up-arrow at the rendered top would otherwise
-        # leave the cursor invisible above the topmost chunk.
-        self._ensure_id_rendered(new_id)
-        self._repaint_for_ids({old_id, new_id} | old_extension)
-        self._scroll_cursor_into_view()
-
-    SCROLL_MARGIN = 2  # rows of breathing room at the viewport edges
-
-    def _scroll_cursor_into_view(self) -> None:
-        """Row-level scroll-follow: keep the cursor row at least
-        SCROLL_MARGIN rows from each viewport edge. When out of range,
-        snap so the cursor lands ~30% from the leading edge."""
-        cursor = self._cursor_msg_id
-        if cursor is None:
-            return
-        chunk = self._find_chunk_for_id(cursor)
-        if chunk is None or chunk.widget is None:
-            return
-
-        # Cursor's y inside the chunk = non-message lines above (day
-        # headers + their blank separators) + cumulative rendered-line
-        # count of all messages above it within the chunk.
-        try:
-            idx = chunk.msg_ids.index(cursor)
-        except ValueError:
-            return
-        lines_above = sum(
-            chunk.row_line_counts[mid] for mid in chunk.msg_ids[:idx]
-        )
-        y_in_chunk = lines_above + chunk.prefix_lines_above[idx]
-
-        def _apply():
-            # `region.y` is SCREEN-relative (already adjusted for
-            # scroll), not virtual. `widget_y + y_in_chunk` gives the
-            # cursor row's screen-y; comparing that against virtual
-            # `scroll_y` (the prior bug) made every off-zero-scroll
-            # arrow press compute a near-zero target and yank the
-            # viewport to the top.
-            try:
-                widget_y = int(chunk.widget.region.y)
-            except Exception:
-                return
-            cursor_screen_y = widget_y + y_in_chunk
-            viewport_h = self._viewport_height_lines()
-            if (
-                self.SCROLL_MARGIN
-                <= cursor_screen_y
-                <= viewport_h - self.SCROLL_MARGIN
-            ):
-                return  # in margin — no scroll
-            # Compute the screen-space delta to put the cursor at the
-            # 30% / 70% sweet spot, then translate to a virtual target
-            # by adding scroll_y.
-            if cursor_screen_y < self.SCROLL_MARGIN:
-                delta = cursor_screen_y - int(viewport_h * 0.3)
-            else:
-                delta = cursor_screen_y - int(viewport_h * 0.7)
-            target = max(0, int(self.scroll_y) + delta)
-            try:
-                self.scroll_to(y=target, animate=False)
-            except Exception:
-                pass
-
-        # Wrap in call_after_refresh so a fresh mount has time to
-        # settle its region.y before we read it (mirrors the §5c
-        # anchor-after-load pattern).
-        self.call_after_refresh(_apply)
-
-    def _find_chunk_for_id(self, msg_id: int):
-        """Return the _ChunkRender holding `msg_id`, or None."""
-        for child in self.children:
-            chunk = getattr(child, "_chunk_render", None)
-            if chunk is not None and msg_id in chunk.row_offsets:
-                return chunk
-        return None
 
     def action_clear_marks(self) -> None:
         self.post_message(self.RangeMarkRequested(msg_id=-1))  # sentinel: clear
@@ -1436,7 +1070,7 @@ class HistoryView(VerticalScroll):
             if affected_ids is not None and not (set(chunk.msg_ids) & affected_ids):
                 continue
             decorated = history_render.paint(
-                chunk, self._cursor_msg_id, marks, palette)
+                chunk, None, marks, palette)
             child.update(decorated)
 
 
