@@ -599,33 +599,17 @@ class _ChunkRender:
 @dataclass(slots=True, frozen=True)
 class SelectionColors:
     """Hex codes consumed by `paint`. Empty strings mean "skip this
-    layer" — keeps `paint` defensive against partial palettes.
-
-    The cursor bar has three context-dependent colors because the
-    default `accent_alt` would be invisible against an endpoint row
-    (already `accent_alt` bg). On an in-range row (already `accent` bg)
-    the bar reverts to `accent_alt`.
-    """
+    layer" — keeps `paint` defensive against partial palettes."""
     endpoint_bg: str
     range_bg: str
-    cursor_tint_bg: str            # B — subtle row tint
-    cursor_bar_default: str        # D — bar color on unselected rows
-    cursor_bar_on_endpoint: str    # D — bar color over an endpoint bg
-    cursor_bar_on_in_range: str    # D — bar color over an in-range bg
     contrast_fg: str               # text fg used on selection-bg rows
 
 
 def selection_colors(palette: dict) -> SelectionColors:
-    """Read the five palette keys we need and pack into SelectionColors."""
-    accent = palette.get("accent", "")
-    accent_alt = palette.get("accent_alt", "")
+    """Read the palette keys paint() needs and pack into SelectionColors."""
     return SelectionColors(
-        endpoint_bg=accent_alt,
-        range_bg=accent,
-        cursor_tint_bg=palette.get("bg_alt", ""),
-        cursor_bar_default=accent_alt,
-        cursor_bar_on_endpoint=accent,
-        cursor_bar_on_in_range=accent_alt,
+        endpoint_bg=palette.get("accent_alt", ""),
+        range_bg=palette.get("accent", ""),
         contrast_fg=palette.get("bg", ""),
     )
 

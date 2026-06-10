@@ -839,12 +839,6 @@ class TestSelectionColors(unittest.TestCase):
         c = history_render.selection_colors(DAWNFOX)
         self.assertEqual(c.endpoint_bg, DAWNFOX["accent_alt"])
         self.assertEqual(c.range_bg, DAWNFOX["accent"])
-        self.assertEqual(c.cursor_tint_bg, DAWNFOX["bg_alt"])
-        # Cursor bar's default color is accent_alt; when on an endpoint
-        # row (already accent_alt bg), the painter flips it to accent.
-        self.assertEqual(c.cursor_bar_default, DAWNFOX["accent_alt"])
-        self.assertEqual(c.cursor_bar_on_endpoint, DAWNFOX["accent"])
-        self.assertEqual(c.cursor_bar_on_in_range, DAWNFOX["accent_alt"])
         self.assertEqual(c.contrast_fg, DAWNFOX["bg"])
 
     def test_terafox_palette(self):
@@ -852,7 +846,6 @@ class TestSelectionColors(unittest.TestCase):
         c = history_render.selection_colors(TERAFOX)
         self.assertEqual(c.endpoint_bg, TERAFOX["accent_alt"])
         self.assertEqual(c.range_bg, TERAFOX["accent"])
-        self.assertEqual(c.cursor_tint_bg, TERAFOX["bg_alt"])
         self.assertEqual(c.contrast_fg, TERAFOX["bg"])
 
     def test_missing_keys_return_empty_strings(self):
