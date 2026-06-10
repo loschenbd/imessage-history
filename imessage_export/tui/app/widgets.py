@@ -566,7 +566,7 @@ class HistoryView(VerticalScroll):
         )
         marks = history_render.MarkState(
             self._mark_start_id, self._mark_end_id, frozenset(self._in_range_ids))
-        decorated = history_render.paint(chunk, None, marks, palette)
+        decorated = history_render.paint(chunk, marks, palette)
         # Use classes (not id) — remove_children() is async, so a rapid
         # chat-switch can still have the previous "recent-chunk" in the
         # node tree when we mount the next one. Classes coexist; ids don't.
@@ -741,7 +741,7 @@ class HistoryView(VerticalScroll):
         marks = history_render.MarkState(
             self._mark_start_id, self._mark_end_id, frozenset(self._in_range_ids))
         older_decorated = history_render.paint(
-            chunk, None, marks, palette)
+            chunk, marks, palette)
         self._shown_count = new_shown
         # _loaded_ids is already complete (every loaded message lives
         # in _all_messages from chat-load time — load-older only widens
@@ -1070,7 +1070,7 @@ class HistoryView(VerticalScroll):
             if affected_ids is not None and not (set(chunk.msg_ids) & affected_ids):
                 continue
             decorated = history_render.paint(
-                chunk, None, marks, palette)
+                chunk, marks, palette)
             child.update(decorated)
 
 
