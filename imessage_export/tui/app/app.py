@@ -359,19 +359,6 @@ class ImessageExportApp(App):
         self.state.last_export_status = None
         self._refresh_status()
 
-    def on_history_view_selection_extended(self, event: HistoryView.SelectionExtended) -> None:
-        """Shift+arrow extended the keyboard selection. Mirror the new
-        (start, end) into AppState so Export bracket-resolves against
-        the selection instead of falling back to mode="all"."""
-        self.state.range_start_msg_id = event.start_id
-        self.state.range_end_msg_id = event.end_id
-        self.state.window_source = "selection"
-        self.state.last_export_status = None
-        # No `_repaint_marks` call: HistoryView already painted the
-        # selection during `_extend_selection` — calling apply_marks
-        # here would rebuild the same highlight set redundantly.
-        self._refresh_status()
-
     def on_history_view_range_mark_requested(self, event: HistoryView.RangeMarkRequested) -> None:
         if event.msg_id == -1:
             # Sentinel: clear all marks (Esc).
