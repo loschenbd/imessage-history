@@ -489,6 +489,11 @@ class HistoryView(VerticalScroll):
         # for handle→display-name swap-in), kept so _ChunkRender.build
         # has a stable dict reference to consume.
         self._contacts: dict = {}
+        # Re-entrancy guard for watch_scroll_y. action_load_older calls
+        # scroll_to() to preserve reading position, which would re-fire
+        # watch_scroll_y. The guard prevents that recursive invocation
+        # from triggering a second autoload before the first completes.
+        self._autoload_in_flight: bool = False
 
     def show_placeholder(self, text: str = "Pick a chat from the left.") -> None:
         self.remove_children()
@@ -1021,10 +1026,25 @@ class HistoryView(VerticalScroll):
         if self.scroll_y < self.AUTOLOAD_TOP_MARGIN:
             self.action_load_older()
 
-    def on_scroll(self, event) -> None:
-        """Mouse-wheel / trackpad scroll: re-check autoload threshold so
-        scroll-to-top with the wheel works the same as arrow keys."""
-        self._check_autoload_threshold()
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        """Fires on every scroll_y change (keyboard, mouse-wheel, drag,
+        programmatic). When the user scrolls into the top margin, auto-
+        load the next older chunk so this feels like infinite scroll
+        regardless of which input caused the scroll. Guarded against
+        re-entry — action_load_older itself causes a scroll_y change via
+        scroll_to() to preserve the user's reading position.
+
+        Widget.watch_scroll_y updates the scrollbar position and triggers
+        a refresh, so we call super() first to preserve that behaviour.
+        """
+        super().watch_scroll_y(old_value, new_value)
+        if self._autoload_in_flight:
+            return
+        self._autoload_in_flight = True
+        try:
+            self._check_autoload_threshold()
+        finally:
+            self._autoload_in_flight = False
 
     def action_cursor_up(self) -> None:
         self._move_cursor(-1)

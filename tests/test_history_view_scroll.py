@@ -171,6 +171,22 @@ class TestHistoryViewScroll(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertEqual(history._shown_count, shown_before)
 
+    async def test_programmatic_scroll_y_change_triggers_autoload(self):
+        """Mouse-wheel and drag-scroll bypass action_scroll_up — they
+        mutate scroll_y directly. Pin that the autoload still fires."""
+        app, HistoryView = self._build_stub_app()
+        async with app.run_test(size=(80, 30)) as pilot:
+            history = app.query_one(HistoryView)
+            history.render_messages(_fake_messages(HistoryView.PREVIEW_CAP * 3))
+            await pilot.pause()
+            shown_before = history._shown_count
+            # Simulate a mouse-wheel scroll all the way to the top
+            # (bypasses action_scroll_up entirely).
+            history.scroll_to(y=2, animate=False)
+            await pilot.pause()
+            self.assertGreater(history._shown_count, shown_before,
+                               "watch_scroll_y didn't fire autoload on programmatic scroll")
+
     async def test_no_cursor_state_after_render(self):
         """Guard against accidental reintroduction of the cursor model.
         If a future edit adds _cursor_msg_id back, this test fails loudly."""
