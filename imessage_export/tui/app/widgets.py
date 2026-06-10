@@ -899,6 +899,11 @@ class HistoryView(VerticalScroll):
         from where Home was supposed to land. watch_scroll_y still
         handles all other programmatic and mouse-driven scrolls.
         """
+        # Early return when already at top: scroll_to(y=0) would no-op
+        # without firing watch_scroll_y, leaving _home_scroll_in_flight
+        # stuck True and suppressing the next organic autoload.
+        if self.scroll_y == 0:
+            return
         self._home_scroll_in_flight = True
         self.scroll_to(y=0, animate=False)
 
