@@ -325,7 +325,7 @@ class TestHistoryViewRangeMarks(unittest.IsolatedAsyncioTestCase):
 
     async def test_on_click_with_stale_meta_msg_id_is_silently_dropped(self):
         """If the click's style.meta refers to a msg_id no longer in
-        _id_to_index (chat-switch race / mid-prune click), on_click
+        _loaded_ids (chat-switch race / mid-prune click), on_click
         must NOT post RangeMarkRequested — silent drop is the contract."""
         from imessage_export.tui.app.widgets import HistoryView
 

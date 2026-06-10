@@ -599,33 +599,17 @@ class _ChunkRender:
 @dataclass(slots=True, frozen=True)
 class SelectionColors:
     """Hex codes consumed by `paint`. Empty strings mean "skip this
-    layer" — keeps `paint` defensive against partial palettes.
-
-    The cursor bar has three context-dependent colors because the
-    default `accent_alt` would be invisible against an endpoint row
-    (already `accent_alt` bg). On an in-range row (already `accent` bg)
-    the bar reverts to `accent_alt`.
-    """
+    layer" — keeps `paint` defensive against partial palettes."""
     endpoint_bg: str
     range_bg: str
-    cursor_tint_bg: str            # B — subtle row tint
-    cursor_bar_default: str        # D — bar color on unselected rows
-    cursor_bar_on_endpoint: str    # D — bar color over an endpoint bg
-    cursor_bar_on_in_range: str    # D — bar color over an in-range bg
     contrast_fg: str               # text fg used on selection-bg rows
 
 
 def selection_colors(palette: dict) -> SelectionColors:
-    """Read the five palette keys we need and pack into SelectionColors."""
-    accent = palette.get("accent", "")
-    accent_alt = palette.get("accent_alt", "")
+    """Read the palette keys paint() needs and pack into SelectionColors."""
     return SelectionColors(
-        endpoint_bg=accent_alt,
-        range_bg=accent,
-        cursor_tint_bg=palette.get("bg_alt", ""),
-        cursor_bar_default=accent_alt,
-        cursor_bar_on_endpoint=accent,
-        cursor_bar_on_in_range=accent_alt,
+        endpoint_bg=palette.get("accent_alt", ""),
+        range_bg=palette.get("accent", ""),
         contrast_fg=palette.get("bg", ""),
     )
 
@@ -647,23 +631,15 @@ _EMPTY_MARKS = MarkState(None, None, frozenset())
 
 def paint(
     chunk: _ChunkRender,
-    cursor_id: int | None,
     marks: MarkState,
     palette: dict,
 ) -> Text:
-    """Clone the chunk's cached base and overlay cursor + selection spans.
+    """Clone the chunk's cached base and overlay selection spans.
 
     The cached `base` is never mutated — every paint returns a clone.
-    Span additions are layered on top so Rich's effective-style
-    composition picks up the bg/fg overlays without disturbing the
-    per-segment `meta`, `dim`, or `bold` modifiers already baked in.
-
-    Endpoint vs in-range vs cursor priority on overlapping rows:
-      - selection bg (endpoint or in-range) always wins for the row's
-        background;
-      - cursor tint (B) is suppressed on a selection row;
-      - cursor bar (D) flips color so it stays visible against the
-        underlying selection bg.
+    Endpoint background always wins; in-range layers under it. No
+    cursor visual — viewport scroll position is the only "where am I"
+    indicator in the viewport-only navigation model.
     """
     out = chunk.base.copy()
     colors = selection_colors(palette)
@@ -673,9 +649,7 @@ def paint(
         start, end = chunk.row_offsets[msg_id]
         is_endpoint = msg_id in endpoints
         is_in_range = (not is_endpoint) and msg_id in marks.in_range_ids
-        is_cursor = msg_id == cursor_id
 
-        # Layer 1 — row-level selection background.
         if is_endpoint and colors.endpoint_bg and colors.contrast_fg:
             out.stylize(
                 _parse_style(f"{colors.contrast_fg} on {colors.endpoint_bg}"),
@@ -686,39 +660,5 @@ def paint(
                 _parse_style(f"{colors.contrast_fg} on {colors.range_bg}"),
                 start, end,
             )
-
-        # Layer 2 — cursor row tint (B), suppressed on selection rows.
-        # When the cursor is on a run head, also paint the tint on the
-        # speaker header line so the cursor visually claims "this whole
-        # message". Selection bg deliberately stays off the header
-        # (range marks don't smear onto speaker headers).
-        if is_cursor and not (is_endpoint or is_in_range):
-            if colors.cursor_tint_bg:
-                tint_style = _parse_style(f"on {colors.cursor_tint_bg}")
-                out.stylize(tint_style, start, end)
-                header = chunk.header_offsets.get(msg_id)
-                if header is not None:
-                    hs, he = header
-                    out.stylize(tint_style, hs, he)
-
-        # Layer 3 — cursor bar (D), on the leading 2 cols regardless of
-        # whether this row also carries a selection bg. Also painted on
-        # the leading 2 cols of the speaker header for run heads so the
-        # bar reads as a single uninterrupted vertical line through the
-        # whole message.
-        if is_cursor:
-            if is_endpoint:
-                bar_color = colors.cursor_bar_on_endpoint
-            elif is_in_range:
-                bar_color = colors.cursor_bar_on_in_range
-            else:
-                bar_color = colors.cursor_bar_default
-            if bar_color:
-                bar_style = _parse_style(f"on {bar_color}")
-                out.stylize(bar_style, start, start + 2)
-                header = chunk.header_offsets.get(msg_id)
-                if header is not None:
-                    hs, _ = header
-                    out.stylize(bar_style, hs, hs + 2)
 
     return out

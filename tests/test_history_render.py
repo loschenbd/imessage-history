@@ -839,12 +839,6 @@ class TestSelectionColors(unittest.TestCase):
         c = history_render.selection_colors(DAWNFOX)
         self.assertEqual(c.endpoint_bg, DAWNFOX["accent_alt"])
         self.assertEqual(c.range_bg, DAWNFOX["accent"])
-        self.assertEqual(c.cursor_tint_bg, DAWNFOX["bg_alt"])
-        # Cursor bar's default color is accent_alt; when on an endpoint
-        # row (already accent_alt bg), the painter flips it to accent.
-        self.assertEqual(c.cursor_bar_default, DAWNFOX["accent_alt"])
-        self.assertEqual(c.cursor_bar_on_endpoint, DAWNFOX["accent"])
-        self.assertEqual(c.cursor_bar_on_in_range, DAWNFOX["accent_alt"])
         self.assertEqual(c.contrast_fg, DAWNFOX["bg"])
 
     def test_terafox_palette(self):
@@ -852,7 +846,6 @@ class TestSelectionColors(unittest.TestCase):
         c = history_render.selection_colors(TERAFOX)
         self.assertEqual(c.endpoint_bg, TERAFOX["accent_alt"])
         self.assertEqual(c.range_bg, TERAFOX["accent"])
-        self.assertEqual(c.cursor_tint_bg, TERAFOX["bg_alt"])
         self.assertEqual(c.contrast_fg, TERAFOX["bg"])
 
     def test_missing_keys_return_empty_strings(self):
@@ -891,7 +884,7 @@ class TestPaint(unittest.TestCase):
     def test_paint_no_state_returns_clone_with_no_extra_spans(self):
         before_span_count = len(self.chunk.base.spans)
         out = history_render.paint(
-            self.chunk, cursor_id=None,
+            self.chunk,
             marks=history_render.MarkState(None, None, frozenset()),
             palette=self.palette,
         )
@@ -901,23 +894,9 @@ class TestPaint(unittest.TestCase):
         self.assertEqual(out.plain, self.chunk.base.plain)
         self.assertEqual(len(out.spans), before_span_count)
 
-    def test_paint_cursor_only_adds_tint_and_bar_spans(self):
-        out = history_render.paint(
-            self.chunk, cursor_id=2,
-            marks=history_render.MarkState(None, None, frozenset()),
-            palette=self.palette,
-        )
-        start, end = self.chunk.row_offsets[2]
-        # B — row tint background spans the full row.
-        self.assertTrue(self._spans_within(out, start, end,
-                                           self.colors.cursor_tint_bg))
-        # D — bar bg on the leading 2 cols.
-        self.assertTrue(self._spans_within(out, start, start + 2,
-                                           self.colors.cursor_bar_default))
-
     def test_paint_endpoint_adds_endpoint_bg(self):
         out = history_render.paint(
-            self.chunk, cursor_id=None,
+            self.chunk,
             marks=history_render.MarkState(
                 anchor_id=1, active_id=1, in_range_ids=frozenset({1})),
             palette=self.palette,
@@ -928,7 +907,7 @@ class TestPaint(unittest.TestCase):
 
     def test_paint_in_range_row_gets_range_bg_not_endpoint(self):
         out = history_render.paint(
-            self.chunk, cursor_id=None,
+            self.chunk,
             marks=history_render.MarkState(
                 anchor_id=1, active_id=3, in_range_ids=frozenset({1, 2, 3})),
             palette=self.palette,
@@ -941,28 +920,11 @@ class TestPaint(unittest.TestCase):
         s1, e1 = self.chunk.row_offsets[1]
         self.assertTrue(self._spans_within(out, s1, e1, self.colors.endpoint_bg))
 
-    def test_paint_cursor_on_endpoint_flips_bar_color(self):
-        out = history_render.paint(
-            self.chunk, cursor_id=1,
-            marks=history_render.MarkState(
-                anchor_id=1, active_id=1, in_range_ids=frozenset({1})),
-            palette=self.palette,
-        )
-        start, _ = self.chunk.row_offsets[1]
-        # Default bar (accent_alt) is invisible on endpoint bg (accent_alt);
-        # painter must flip to cursor_bar_on_endpoint (accent).
-        self.assertTrue(self._spans_within(out, start, start + 2,
-                                           self.colors.cursor_bar_on_endpoint))
-        # Cursor tint (B) is suppressed on a selection row.
-        end = self.chunk.row_offsets[1][1]
-        self.assertFalse(self._spans_within(out, start, end,
-                                            self.colors.cursor_tint_bg))
-
     def test_paint_does_not_mutate_chunk_base(self):
         before_plain = self.chunk.base.plain
         before_spans = list(self.chunk.base.spans)
         history_render.paint(
-            self.chunk, cursor_id=3,
+            self.chunk,
             marks=history_render.MarkState(1, 3, frozenset({1, 2, 3})),
             palette=self.palette,
         )
