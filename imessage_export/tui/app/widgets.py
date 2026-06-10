@@ -494,6 +494,12 @@ class HistoryView(VerticalScroll):
         # watch_scroll_y. The guard prevents that recursive invocation
         # from triggering a second autoload before the first completes.
         self._autoload_in_flight: bool = False
+        # Set by action_scroll_top so that watch_scroll_y skips the
+        # autoload check for the Home scroll. Home is "jump to the top
+        # of loaded content" — the affordance stays visible so the user
+        # can explicitly request more; auto-triggering a load would
+        # override the user's intended position via _preserve_position_with_peek.
+        self._home_scroll_in_flight: bool = False
 
     def show_placeholder(self, text: str = "Pick a chat from the left.") -> None:
         self.remove_children()
@@ -1002,10 +1008,17 @@ class HistoryView(VerticalScroll):
         self.scroll_relative(y=self._viewport_height_lines(), animate=False)
 
     def action_scroll_top(self) -> None:
-        """Scroll to the top of currently-loaded content; auto-load if older
-        chunks exist (the affordance stays visible regardless)."""
+        """Scroll to the top of currently-loaded content.
+
+        The "Load older messages" affordance remains visible so the user
+        can request more content explicitly. We deliberately do NOT
+        auto-load here — firing action_load_older would override y=0
+        via its position-restore callback and snap the viewport away
+        from where Home was supposed to land. watch_scroll_y still
+        handles all other programmatic and mouse-driven scrolls.
+        """
+        self._home_scroll_in_flight = True
         self.scroll_to(y=0, animate=False)
-        self._check_autoload_threshold()
 
     def action_scroll_bottom(self) -> None:
         """Scroll to the bottom (latest message)."""
@@ -1032,13 +1045,22 @@ class HistoryView(VerticalScroll):
         load the next older chunk so this feels like infinite scroll
         regardless of which input caused the scroll. Guarded against
         re-entry — action_load_older itself causes a scroll_y change via
-        scroll_to() to preserve the user's reading position.
+        scroll_to() to preserve the user's reading position. Skipped
+        when _home_scroll_in_flight is set — action_scroll_top owns the
+        explicit scroll to y=0 and must not have its landing position
+        overridden by the position-restore inside action_load_older.
 
         Widget.watch_scroll_y updates the scrollbar position and triggers
         a refresh, so we call super() first to preserve that behaviour.
         """
         super().watch_scroll_y(old_value, new_value)
         if self._autoload_in_flight:
+            return
+        # If Home fired this scroll (action_scroll_top set the flag), skip
+        # the autoload so _preserve_position_with_peek doesn't override y=0.
+        # Clear the flag here so future organic scrolls are unrestricted.
+        if self._home_scroll_in_flight:
+            self._home_scroll_in_flight = False
             return
         self._autoload_in_flight = True
         try:
