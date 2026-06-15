@@ -47,21 +47,55 @@ The headless flag surface is unchanged — `imessage-export --chat-id N
 
 ## Interactive app (default)
 
-On a TTY, `imessage-export` opens a Textual app:
+On a TTY, `imessage-export` opens a Textual app with three regions:
 
-- **Left:** scrollable, filter-as-you-type chat list.
-- **Right:** the selected chat's full history.
+- **Sidebar (left):** scrollable chat list with fuzzy type-to-filter.
+  The active region's border is tinted so you always know what arrow
+  keys will act on.
+- **Preview (right):** a `ChatHeader` banner naming the participants, a
+  `WindowStrip` row of date / time inputs above the messages, and the
+  message history itself. Older messages lazy-load in 2,000-row chunks
+  as you scroll up (or press `O`).
 - **Footer:** status line + action buttons (`Window`, `Settings`,
   `Redact`, `Export`, `Wizard`, `Help`, `Quit`).
 
-To set the export window, either click two messages in the history
-pane (first click = start, second = end), or press `W` (or click
-`[ Window… ]`) to type a window. Press `E` to export.
+Set the export window in one of two ways:
+
+- **Click a message** in the history pane. First click drops the start
+  endpoint, second click drops the end endpoint, and any further click
+  moves the nearer endpoint. The full range is highlighted; `Esc`
+  clears it.
+- **Type into the `WindowStrip`** above the chat: From / To dates,
+  optional start / end times (e.g. `9am`, `5pm`), or one of the
+  relative presets (`7d`, `30d`, `Month`, `Year`). Press `Apply` to
+  filter the preview; `Clear` drops the filter.
+
+Press `E` (or click `[ Export ]`) to run the export against the
+current window. If you try to export without one set, the app warns
+you first.
+
+### Keys
+
+| Key | Action |
+|---|---|
+| `← / →` | Jump between sidebar and history |
+| `↑ / ↓` | Move in the sidebar / scroll the history one row |
+| `Home / End` | Top of loaded / latest message |
+| `PageUp / PageDown` | Page the focused region |
+| `Tab / Shift+Tab` | Cycle focus through focusable widgets |
+| `Esc` | Clear filter (sidebar) / clear marks (history) |
+| `O` | Load 2,000 older messages |
+| `W / S / R / E` | Window… / Settings… / Redact… / Export |
+| `Z / H / Q` | Wizard / Help / Quit |
 
 The app remembers your last contacts file, output directory, "me"
-label, and most-recently-used chat across runs.
+label, theme override, and most-recently-used chat across runs.
 
-Prefer the linear wizard from Phase 1? Run `imessage-export --wizard`.
+On first run with no `contacts.csv`, the app offers to populate one by
+reading your macOS Contacts (a one-time Contacts permission prompt).
+Skip the offer to keep operating with raw handles.
+
+Prefer the linear Phase 1 wizard instead? Run `imessage-export --wizard`.
 
 ## Theming
 
