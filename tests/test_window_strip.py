@@ -122,6 +122,7 @@ class TestFilterByWindow(unittest.TestCase):
         self.assertEqual([m["message_id"] for m in out], [3, 4])
 
 
+@unittest.skipUnless(HAS_TEXTUAL, "[tui] extra not installed")
 class TestPresetRange(unittest.TestCase):
     """Pure date math, frozen against a known `today`."""
 

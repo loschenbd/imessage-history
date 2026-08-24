@@ -9,10 +9,33 @@ jobs:
   unittest:
     strategy:
       fail-fast: false
+      # macOS only: the exporter reads ~/Library/Messages/chat.db, so there is
+      # no Linux surface worth covering.
+      #
+      # Combinations are listed explicitly rather than built from a base
+      # matrix + include. `include` merges into a matching combination when it
+      # doesn't overwrite an original key, so the obvious shorthand would
+      # silently convert the 3.13 no-extras job into the extras one instead of
+      # adding a fifth job.
       matrix:
-        os: [ubuntu-latest, macos-latest]
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
-    runs-on: ${{ matrix.os }}
+        include:
+          # Core must stay importable with stdlib only; TUI tests skip
+          # themselves via their [tui] guards.
+          - python-version: "3.10"
+            tui-extra: false
+          - python-version: "3.11"
+            tui-extra: false
+          - python-version: "3.12"
+            tui-extra: false
+          - python-version: "3.13"
+            tui-extra: false
+          # One leg with the extra installed: actually exercises the Textual /
+          # rich layer, and gives test_no_rich_import_on_headless real teeth
+          # (it can only detect a leaked `rich` import when rich is installed).
+          - python-version: "3.13"
+            tui-extra: true
+    name: unittest (${{ matrix.python-version }}, tui=${{ matrix.tui-extra }})
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -20,6 +43,10 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+
+      - name: Install [tui] extra
+        if: matrix.tui-extra
+        run: python -m pip install -e ".[tui]"
 
       - name: Run test suite
         run: python -m unittest discover -s tests -v

@@ -7,7 +7,15 @@ HistoryView integration tests run.
 """
 from __future__ import annotations
 
+import importlib
 import unittest
+
+# history_render imports rich at module load; without the [tui] extra that
+# import is a hard error, so skip the module rather than fail collection.
+try:
+    importlib.import_module("rich")
+except ImportError:  # pragma: no cover - depends on install extras
+    raise unittest.SkipTest("[tui] extra not installed")
 
 from imessage_export.models import Message
 from imessage_export.tui.app import history_render
