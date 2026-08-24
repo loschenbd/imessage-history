@@ -7,7 +7,8 @@ so security reports get priority.
 
 **Do not open a public GitHub issue for security reports.**
 
-Instead, email **<ben@benjaminloschen.com>** with:
+Instead, open a **[private security advisory][advisory]** — it's visible
+only to you and the maintainer. Include:
 
 - A description of the issue
 - Reproduction steps (using synthetic data — see CONTRIBUTING.md)
@@ -69,3 +70,5 @@ This tool does **not** protect against:
 - Shoulder surfing or screen recordings.
 
 If your threat model includes any of those, this tool alone is not enough.
+
+[advisory]: https://github.com/loschenbd/imessage-history/security/advisories/new
